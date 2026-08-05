@@ -1,5 +1,58 @@
 import { spawn } from "node:child_process";
 
+export function detectClaudeModel(cwd: string, timeoutMs = 30_000) {
+  if (process.env.CLAUDE_MODEL)
+    return Promise.resolve(process.env.CLAUDE_MODEL);
+
+  return new Promise<string>((resolve) => {
+    const child = spawn(
+      process.env.CLAUDE_CLI_PATH || "claude",
+      [
+        "-p",
+        "Reply with OK.",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--tools",
+        "",
+      ],
+      { cwd, env: process.env, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let settled = false;
+    let buffer = "";
+    const finish = (model = "CLI default") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(model);
+    };
+    const inspectLine = (line: string) => {
+      if (!line.trim() || settled) return;
+      try {
+        const event = JSON.parse(line);
+        if (event.type === "system" && event.model) {
+          finish(String(event.model));
+          child.kill("SIGTERM");
+        }
+      } catch {}
+    };
+    const timer = setTimeout(() => {
+      finish();
+      child.kill("SIGTERM");
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) inspectLine(line);
+    });
+    child.stdout.on("end", () => inspectLine(buffer));
+    child.on("error", () => finish());
+    child.on("close", () => finish());
+  });
+}
+
 export type ClaudeEvent = { type: string; [key: string]: unknown };
 export type ClaudeActivity = {
   kind: "status" | "thinking" | "tool" | "tool_result";

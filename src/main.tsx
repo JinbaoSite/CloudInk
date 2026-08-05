@@ -158,6 +158,7 @@ function App() {
     [messages, setMessages] = useState<Message[]>([]),
     [input, setInput] = useState(""),
     [mode, setMode] = useState<ExecutionMode>("auto"),
+    [currentModel, setCurrentModel] = useState("CLI default"),
     [attachments, setAttachments] = useState<Attachment[]>([]),
     [showSlashMenu, setShowSlashMenu] = useState(false),
     [showModeMenu, setShowModeMenu] = useState(false),
@@ -181,8 +182,13 @@ function App() {
   const load = () => api("/sessions").then(setSessions);
   useEffect(() => {
     api("/me")
-      .then(setMe)
-      .then(load)
+      .then((user) => {
+        setMe(user);
+        void load();
+        void api("/config")
+          .then((config) => setCurrentModel(config.model))
+          .catch(() => undefined);
+      })
       .catch(() => setMe(null));
   }, []);
   useEffect(() => {
@@ -298,7 +304,9 @@ function App() {
         text?: string;
         activity?: Activity;
         error?: string;
+        model?: string;
       }) => {
+        if (evt.type === "model" && evt.model) setCurrentModel(evt.model);
         if (evt.type === "delta" && evt.text)
           setMessages((items) =>
             items.map((message) =>
@@ -633,6 +641,12 @@ function App() {
               </button>
             </div>
             <div className="composer-actions-right">
+              <span
+                className="model-indicator"
+                title={`当前模型：${currentModel}`}
+              >
+                {currentModel}
+              </span>
               <button
                 type="button"
                 className="mode-picker"

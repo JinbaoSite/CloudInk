@@ -14,8 +14,14 @@ import {
   tokenFor,
   type AuthedRequest,
 } from "./auth.js";
-import { activitiesFromEvent, runClaude, textFromEvent } from "./claude.js";
+import {
+  activitiesFromEvent,
+  detectClaudeModel,
+  runClaude,
+  textFromEvent,
+} from "./claude.js";
 const app = express();
+const detectedModel = detectClaudeModel(process.cwd());
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 const upload = multer({
@@ -87,6 +93,9 @@ app.get("/api/me", requireAuth, (req, res) => {
     .get((req as AuthedRequest).userId);
   res.json(u);
 });
+app.get("/api/config", requireAuth, async (_req, res) =>
+  res.json({ model: await detectedModel }),
+);
 app.post("/api/files", requireAuth, (req, res) => {
   upload.array("files", 10)(req, res, (error) => {
     if (error) {
@@ -268,6 +277,8 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     if (!line.trim()) return;
     try {
       const event = JSON.parse(line);
+      if (event.type === "system" && event.model)
+        sendEvent({ type: "model", model: String(event.model) });
       const text = textFromEvent(event);
       if (text) {
         answer += text;

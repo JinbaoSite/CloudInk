@@ -60,6 +60,12 @@
 
 修改 Mode 时同步检查 UI 文案、图标、Zod schema 和传给 Claude CLI 的 `--permission-mode`。
 
+### 模型探测
+
+- 未配置 `CLAUDE_MODEL` 时，服务启动只执行一次轻量探测并缓存 `system/init.model`。
+- 探测必须禁用工具和会话持久化，并设置超时与 `CLI default` 回退。
+- 正式聊天返回 `model` 事件时，前端仍应更新显示，以反映 fallback 或运行时模型变化。
+
 ### 响应式布局
 
 - `index.html` 必须保留 `width=device-width` 的 viewport 声明。

@@ -111,6 +111,8 @@ data/
 
 修改 `WORKSPACE_DIR` 不会自动搬迁旧工作区。已有项目需要先停止服务，将原工作区文件移动到新的用户目录后再启动。
 
+未配置 `CLAUDE_MODEL` 时，服务启动会执行一次无工具、无会话持久化的轻量 Claude 请求，从 `system/init` 事件中获取并缓存 CLI 实际模型。该探测可能产生少量额度消耗；失败或超时后界面显示 `CLI default`，正式对话仍会根据运行事件更新模型名称。
+
 数据库关系为 `users → sessions → messages`。所有会话和消息接口都会同时校验当前登录用户，不能仅凭会话 ID 跨用户读取或删除数据。每个 Web 会话还对应独立的 Claude CLI session ID，首轮使用 `--session-id`，后续使用 `--resume`。
 
 ## 会话生命周期

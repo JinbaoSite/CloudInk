@@ -112,6 +112,13 @@ aside {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.sidebar-heading,
+.new,
+aside footer {
+  flex: 0 0 auto;
 }
 .new {
   display: flex;
@@ -163,12 +170,34 @@ aside {
   outline-offset: 2px;
 }
 nav {
-  overflow: auto;
   flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 3px;
+  overscroll-behavior: contain;
+  scrollbar-color: #c3beb5 transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+nav::-webkit-scrollbar {
+  width: 6px;
+}
+nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+nav::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c3beb5;
+}
+nav::-webkit-scrollbar-thumb:hover {
+  background: #aaa49a;
 }
 .session {
   display: flex;
   align-items: center;
+  min-height: 38px;
+  flex: 0 0 auto;
   padding: 9px 10px;
   border-radius: 8px;
   font-size: 14px;

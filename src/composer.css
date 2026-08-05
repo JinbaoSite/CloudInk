@@ -219,6 +219,17 @@
   cursor: pointer;
   font-size: 12px;
 }
+.model-indicator {
+  display: block;
+  max-width: 150px;
+  padding: 0 4px;
+  overflow: hidden;
+  color: #938d83;
+  font-size: 11px;
+  line-height: 32px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .composer .mode-picker:hover,
 .composer .mode-picker:focus {
