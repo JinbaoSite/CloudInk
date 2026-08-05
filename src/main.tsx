@@ -66,6 +66,9 @@ const slashSkills = [
   { name: "/verify", description: "验证实现和完整业务流程" },
   { name: "/deep-research", description: "执行多步骤深度研究" },
 ];
+function localId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 async function api(url: string, options?: RequestInit) {
   const r = await fetch("/api" + url, {
     headers: { "Content-Type": "application/json" },
@@ -164,6 +167,7 @@ function App() {
     [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const skipMessageLoadForRef = useRef("");
   const slashMatch = input.match(/(?:^|\s)(\/[^\s]*)$/);
   const slashQuery = slashMatch?.[1].toLowerCase() || "";
   const filteredCommands = slashCommands.filter((command) =>
@@ -182,12 +186,21 @@ function App() {
       .catch(() => setMe(null));
   }, []);
   useEffect(() => {
-    if (active)
-      api(`/sessions/${active}/messages`).then((items: Message[]) =>
-        setMessages(items),
-      );
+    if (!active) return;
+    if (skipMessageLoadForRef.current === active) {
+      skipMessageLoadForRef.current = "";
+      return;
+    }
+    let cancelled = false;
+    api(`/sessions/${active}/messages`).then((items: Message[]) => {
+      if (!cancelled) setMessages(items);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [active]);
   function create() {
+    if (busy) return;
     setActive("");
     setMessages([]);
     setInput("");
@@ -241,16 +254,20 @@ function App() {
     if (!id) {
       const s = await api("/sessions", { method: "POST" });
       id = s.id;
+      skipMessageLoadForRef.current = id;
       setActive(id);
     }
     const text = input;
     const sentAttachments = attachments;
+    const userMessageId = localId("user");
+    const assistantMessageId = localId("assistant");
     setInput("");
     setBusy(true);
     setError("");
     setMessages((v) => [
       ...v,
       {
+        id: userMessageId,
         role: "user",
         content: [
           text,
@@ -259,7 +276,7 @@ function App() {
           .filter(Boolean)
           .join("\n"),
       },
-      { role: "assistant", content: "" },
+      { id: assistantMessageId, role: "assistant", content: "" },
     ]);
     try {
       const r = await fetch(`/api/sessions/${id}/messages`, {
@@ -276,33 +293,50 @@ function App() {
       const reader = r.body!.getReader(),
         decoder = new TextDecoder();
       let buf = "";
+      const handleEvent = (evt: {
+        type: string;
+        text?: string;
+        activity?: Activity;
+        error?: string;
+      }) => {
+        if (evt.type === "delta" && evt.text)
+          setMessages((items) =>
+            items.map((message) =>
+              message.id === assistantMessageId
+                ? { ...message, content: message.content + evt.text }
+                : message,
+            ),
+          );
+        if (evt.type === "activity" && evt.activity)
+          setMessages((items) => {
+            const assistantIndex = items.findIndex(
+              (message) => message.id === assistantMessageId,
+            );
+            if (assistantIndex < 0) return items;
+            return [
+              ...items.slice(0, assistantIndex),
+              {
+                id: localId("activity"),
+                role: "activity",
+                content: JSON.stringify(evt.activity),
+              },
+              ...items.slice(assistantIndex),
+            ];
+          });
+        if (evt.type === "error")
+          throw new Error(evt.error || "Claude 请求失败");
+      };
       while (true) {
-        const { x, value } = await reader
-          .read()
-          .then(({ done, value }) => ({ x: done, value }));
-        if (x) break;
+        const { done, value } = await reader.read();
+        if (done) break;
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split("\n");
         buf = lines.pop() || "";
-        for (const line of lines) {
-          const evt = JSON.parse(line);
-          if (evt.type === "delta")
-            setMessages((v) =>
-              v.map((m, i) =>
-                i === v.length - 1
-                  ? { ...m, content: m.content + evt.text }
-                  : m,
-              ),
-            );
-          if (evt.type === "activity")
-            setMessages((v) => [
-              ...v.slice(0, -1),
-              { role: "activity", content: JSON.stringify(evt.activity) },
-              v[v.length - 1],
-            ]);
-          if (evt.type === "error") throw new Error(evt.error);
-        }
+        for (const line of lines)
+          if (line.trim()) handleEvent(JSON.parse(line));
       }
+      buf += decoder.decode();
+      if (buf.trim()) handleEvent(JSON.parse(buf));
       await load();
     } catch (e) {
       setError((e as Error).message);

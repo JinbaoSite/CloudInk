@@ -244,7 +244,9 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.flushHeaders();
   const abort = new AbortController();
-  req.on("close", () => abort.abort());
+  res.on("close", () => {
+    if (!res.writableEnded) abort.abort();
+  });
   const cwd = workspace;
   fs.mkdirSync(cwd, { recursive: true });
   const child = runClaude({
@@ -258,35 +260,45 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   let answer = "",
     stderr = "";
   let buffer = "";
+  const sendEvent = (event: object) => {
+    if (!res.destroyed && !res.writableEnded)
+      res.write(JSON.stringify(event) + "\n");
+  };
+  const processClaudeLine = (line: string) => {
+    if (!line.trim()) return;
+    try {
+      const event = JSON.parse(line);
+      const text = textFromEvent(event);
+      if (text) {
+        answer += text;
+        sendEvent({ type: "delta", text });
+      }
+      for (const activity of activitiesFromEvent(event)) {
+        const t = new Date().toISOString();
+        db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
+          crypto.randomUUID(),
+          s.id,
+          "activity",
+          JSON.stringify(activity),
+          t,
+        );
+        sendEvent({ type: "activity", activity });
+      }
+      if (event.type === "result" && !answer && event.result) {
+        answer = String(event.result);
+        sendEvent({ type: "delta", text: answer });
+      }
+    } catch {}
+  };
   child.stdout.on("data", (chunk) => {
     buffer += chunk;
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
-    for (const line of lines) {
-      try {
-        const event = JSON.parse(line);
-        const text = textFromEvent(event);
-        if (text) {
-          answer += text;
-          res.write(JSON.stringify({ type: "delta", text }) + "\n");
-        }
-        for (const activity of activitiesFromEvent(event)) {
-          const t = new Date().toISOString();
-          db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
-            crypto.randomUUID(),
-            s.id,
-            "activity",
-            JSON.stringify(activity),
-            t,
-          );
-          res.write(JSON.stringify({ type: "activity", activity }) + "\n");
-        }
-        if (event.type === "result" && !answer && event.result) {
-          answer = String(event.result);
-          res.write(JSON.stringify({ type: "delta", text: answer }) + "\n");
-        }
-      } catch {}
-    }
+    for (const line of lines) processClaudeLine(line);
+  });
+  child.stdout.on("end", () => {
+    processClaudeLine(buffer);
+    buffer = "";
   });
   child.stderr.on("data", (c) => (stderr += c));
   child.on("close", (code) => {
@@ -301,14 +313,12 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
       );
       db.prepare("UPDATE sessions SET updated_at=? WHERE id=?").run(t, s.id);
     }
-    res.write(
-      JSON.stringify(
-        code === 0
-          ? { type: "done" }
-          : { type: "error", error: stderr || `Claude 退出码 ${code}` },
-      ) + "\n",
+    sendEvent(
+      code === 0
+        ? { type: "done" }
+        : { type: "error", error: stderr || `Claude 退出码 ${code}` },
     );
-    res.end();
+    if (!res.destroyed && !res.writableEnded) res.end();
   });
 });
 if (process.env.NODE_ENV === "production") {
