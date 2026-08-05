@@ -204,6 +204,39 @@
   opacity: 0.4;
 }
 
+.composer .send-button.stop-button {
+  border: 1px solid #e4c8bd;
+  background: #fff7f3;
+  box-shadow: 0 1px 3px #7d352314;
+  color: #b65a3b;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.composer .send-button.stop-button:hover {
+  border-color: #d9aa99;
+  background: #ffede6;
+  box-shadow: 0 3px 8px #7d35231c;
+  transform: translateY(-1px);
+}
+
+.composer .send-button.stop-button:active {
+  box-shadow: 0 1px 2px #7d352314;
+  transform: translateY(0);
+}
+
+.stop-icon {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
 .composer .mode-picker {
   display: flex;
   align-items: center;

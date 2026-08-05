@@ -68,6 +68,7 @@ export function runClaude(opts: {
   resume: boolean;
   permissionMode: "auto" | "plan" | "manual" | "acceptEdits";
   signal: AbortSignal;
+  tools?: string;
 }) {
   const args = [
     "-p",
@@ -80,6 +81,8 @@ export function runClaude(opts: {
     opts.permissionMode,
     "--allowed-tools",
     process.env.CLAUDE_ALLOWED_TOOLS || "Bash",
+    "--tools",
+    opts.tools ?? "default",
   ];
   if (process.env.CLAUDE_MODEL) args.push("--model", process.env.CLAUDE_MODEL);
   if (opts.resume) args.push("--resume", opts.sessionId);

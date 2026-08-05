@@ -11,13 +11,13 @@
 
 ## 代码地图
 
-- `src/main.tsx`：认证、会话状态、附件、NDJSON 流读取、执行模式及主要 UI。
-- `src/MarkdownMessage.tsx`：Markdown、GFM、数学公式渲染。
+- `src/main.tsx`：认证、会话状态、附件、NDJSON 流读取、自动滚动、执行模式及主要 UI。
+- `src/MarkdownMessage.tsx`：Markdown、GFM、延迟数学公式渲染和消息级错误边界。
 - `src/styles.css`：应用框架、侧栏、顶部导航和 `700px` 移动端断点。
 - `src/chat-layout.css`：滚动区域和用户/助手消息布局。
 - `src/composer.css`：固定输入区、附件、Commands、Skills 和 Mode 面板。
 - `src/activity.css`：Thinking、工具调用和工具结果。
-- `server/index.ts`：认证、会话、消息、附件和 NDJSON API。
+- `server/index.ts`：认证、会话、消息、附件、断裂会话恢复和 NDJSON API。
 - `server/auth.ts`：JWT 签发、Cookie 和鉴权。
 - `server/db.ts`：SQLite schema、兼容迁移和用户工作区。
 - `server/claude.ts`：Claude CLI 参数及 `stream-json` 事件解析。
@@ -39,6 +39,7 @@
 - 只有首次发送非空消息或附件时才创建会话。
 - 空白会话不得出现在历史记录中。
 - CLI 首轮使用新的 `--session-id`，后续使用 `--resume`。
+- 对断裂会话发送“继续”等短指令时，必须从数据库补充原始问题和最近有效助手回答，忽略 `No response requested.`，使用新的无工具 CLI session，并将新 session ID 写回 Web 会话。
 
 ### 聊天与流式输出
 
@@ -47,7 +48,11 @@
 - NDJSON 必须逐行解析，并保留未完成的 buffer。
 - `delta` 追加到当前助手消息。
 - `activity` 插入助手消息之前，并持久化到数据库。
-- Markdown、GFM 和 MathJax 渲染不能因流式更新失效。
+- 回答期间发送按钮必须切换为中止按钮；中止应关闭浏览器流和 Claude 子进程、保留部分输出且不显示为错误。
+- 新消息发送后必须定位到最新内容；流式 `delta` 和 `activity` 到达时持续跟随底部。
+- 用户主动上滚时应暂停自动跟随，回到底部附近后恢复。
+- 流式阶段不得调用 MathJax 修改 React DOM；回答完成后才能统一执行公式排版。
+- Markdown 渲染必须有消息级错误边界，单条内容异常时回退为纯文本，不能让应用根节点白屏。
 
 ### Claude 权限模式
 
@@ -109,7 +114,11 @@ npm test
 - 首次发送内容后会话是否出现并正确生成标题。
 - 用户/助手消息是否保持左右布局。
 - Markdown、代码块、表格和数学公式是否正常。
+- 数学公式密集的流式回答是否保持页面稳定，并在结束后完成排版。
 - Thinking、Read、Bash 和执行结果是否按顺序展示。
+- 发送消息和流式回答时是否跟随底部，手动上滚时是否停止抢占位置。
+- 中止回答后是否停止增长、保留部分内容并恢复发送按钮。
+- 断裂会话输入“继续”时是否能恢复内容且不返回 `No response requested.`。
 - Commands、Skills、Mode 面板是否位于输入框上方且不遮挡输入。
 - 附件是否只能来自当前用户工作区。
 - 手机端汉堡菜单、抽屉遮罩、右上角新建和底部输入框是否正常。

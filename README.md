@@ -8,8 +8,12 @@
 - 用户之间的会话、消息和工作区相互隔离
 - Claude Code CLI 会话续接
 - NDJSON 流式响应
+- 回答过程中可强制中止，并保留已经输出的内容
+- 发送消息和流式回答时自动跟随最新内容，手动上滚时暂停跟随
 - Markdown、GFM 和 MathJax 数学公式渲染
+- 中断会话支持通过“继续”恢复已保存的部分回答
 - 展示 Thinking、Read、Bash、工具输入及执行结果
+- 输入框底部展示 Claude CLI 实际使用的模型
 - `Auto`、`Plan`、`Manual`、`Edit automatically` 执行模式
 - `/` 命令与 Skills 选择面板
 - 最多上传 10 个附件，单个文件最大 20 MB
@@ -120,8 +124,18 @@ data/
 1. 点击“新对话”只清空当前前端状态，不写入数据库。
 2. 用户首次发送消息或附件时创建数据库会话。
 3. 首条内容生成历史会话标题。
-4. 后续消息继续使用同一个 Claude CLI session ID。
+4. 后续消息通常使用同一个 Claude CLI session ID 进行 `--resume`。
 5. Thinking、工具调用、工具结果和最终回答都会持久化。
+6. 如果 CLI session 在回答中途断裂，发送“继续”时会从数据库补齐原始问题和最近有效回答，创建新的无工具 CLI session 继续生成。
+
+## 流式交互行为
+
+- 用户发送消息时，消息区域立即定位到最新内容。
+- `delta`、Thinking 和工具事件到达时持续跟随底部。
+- 用户主动向上滚动时暂停自动跟随，回到底部附近后恢复。
+- 回答期间发送按钮切换为中止按钮；中止会关闭响应流和 Claude 子进程，并保留已经生成的部分文本。
+- MathJax 在流式阶段不直接修改 React DOM，只在回答结束后统一排版公式。
+- Markdown 渲染异常时仅将对应消息回退为纯文本，不会让整个页面白屏。
 
 ## API 概览
 
@@ -138,7 +152,7 @@ data/
 | `DELETE` | `/api/sessions/:id`          | 删除会话               |
 | `POST`   | `/api/files`                 | 上传附件               |
 
-消息接口返回 `application/x-ndjson`，事件类型包括 `delta`、`activity`、`done` 和 `error`。
+消息接口返回 `application/x-ndjson`，事件类型包括 `delta`、`activity`、`model`、`done` 和 `error`。
 
 ## 常用命令
 
@@ -167,18 +181,18 @@ npm test          # 运行 Node 测试
 
 ```text
 src/
-├── main.tsx             # 页面、认证、会话、流式聊天和移动端交互
-├── MarkdownMessage.tsx  # Markdown 与数学公式渲染
+├── main.tsx             # 页面、认证、会话、流式聊天、自动滚动和移动端交互
+├── MarkdownMessage.tsx  # Markdown、延迟 MathJax 渲染和错误回退
 ├── styles.css           # 基础、侧栏和响应式布局
 ├── chat-layout.css      # 消息区域与左右布局
 ├── composer.css         # 输入框、模式及命令面板
 ├── activity.css         # Claude 执行过程样式
 └── markdown.css         # Markdown 内容样式
 server/
-├── index.ts             # API、上传和流式响应
+├── index.ts             # API、上传、流式响应和中断会话恢复
 ├── auth.ts              # JWT Cookie 与鉴权中间件
 ├── db.ts                # SQLite schema、迁移和工作区初始化
-└── claude.ts            # Claude CLI 启动和事件解析
+└── claude.ts            # Claude CLI 启动、模型探测和事件解析
 ```
 
 ## 验证

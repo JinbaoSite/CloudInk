@@ -233,9 +233,52 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   ]
     .filter(Boolean)
     .join("\n");
+  let promptContent = body.data.content.trim();
+  let restartClaudeSession = false;
+  const isContinuation =
+    /^(继续|继续回答|继续说|接着|接着说|接着回答|continue)[。.!！]?$/i.test(
+      promptContent,
+    );
+  if (isContinuation) {
+    const previousAnswer = db
+      .prepare(
+        `SELECT content FROM messages
+         WHERE session_id=? AND role='assistant' AND content<>'No response requested.'
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(s.id) as { content: string } | undefined;
+    const originalQuestion = db
+      .prepare(
+        `SELECT content FROM messages
+         WHERE session_id=? AND role='user'
+         ORDER BY created_at ASC LIMIT 1`,
+      )
+      .get(s.id) as { content: string } | undefined;
+    if (previousAnswer?.content) {
+      restartClaudeSession = true;
+      promptContent = [
+        "用户要求继续一段因连接中断而未完成的回答。请直接从中断处续写，不要回复 No response requested，也不要从头重复已经完成的内容。",
+        originalQuestion?.content
+          ? `原始问题：\n${originalQuestion.content.slice(0, 10_000)}`
+          : "",
+        `已经输出的回答：\n${previousAnswer.content.slice(-50_000)}`,
+        "请继续：",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    }
+  }
   const prompt = body.data.attachments.length
-    ? `${body.data.content.trim()}\n\n附件位于当前工作区，请按需使用 Read 或 Bash 读取：\n${body.data.attachments.map((attachment) => `- ${attachment.path}`).join("\n")}`
-    : body.data.content.trim();
+    ? `${promptContent}\n\n附件位于当前工作区，请按需使用 Read 或 Bash 读取：\n${body.data.attachments.map((attachment) => `- ${attachment.path}`).join("\n")}`
+    : promptContent;
+  let claudeSessionId = s.claude_session_id as string;
+  if (restartClaudeSession) {
+    claudeSessionId = crypto.randomUUID();
+    db.prepare("UPDATE sessions SET claude_session_id=? WHERE id=?").run(
+      claudeSessionId,
+      s.id,
+    );
+  }
   db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
     crypto.randomUUID(),
     s.id,
@@ -261,10 +304,11 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   const child = runClaude({
     prompt,
     cwd,
-    sessionId: s.claude_session_id,
-    resume: count > 0,
+    sessionId: claudeSessionId,
+    resume: count > 0 && !restartClaudeSession,
     permissionMode: body.data.mode,
     signal: abort.signal,
+    tools: restartClaudeSession ? "" : undefined,
   });
   let answer = "",
     stderr = "";

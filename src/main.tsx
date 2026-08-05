@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "./MarkdownMessage";
 import "./styles.css";
@@ -168,7 +168,10 @@ function App() {
     [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const autoScrollRef = useRef(true);
   const skipMessageLoadForRef = useRef("");
+  const responseAbortRef = useRef<AbortController | null>(null);
   const slashMatch = input.match(/(?:^|\s)(\/[^\s]*)$/);
   const slashQuery = slashMatch?.[1].toLowerCase() || "";
   const filteredCommands = slashCommands.filter((command) =>
@@ -205,8 +208,21 @@ function App() {
       cancelled = true;
     };
   }, [active]);
+  useLayoutEffect(() => {
+    if (!autoScrollRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      const container = messagesRef.current;
+      if (!container) return;
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: busy ? "auto" : "smooth",
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messages, busy]);
   function create() {
     if (busy) return;
+    autoScrollRef.current = true;
     setActive("");
     setMessages([]);
     setInput("");
@@ -267,6 +283,9 @@ function App() {
     const sentAttachments = attachments;
     const userMessageId = localId("user");
     const assistantMessageId = localId("assistant");
+    const requestController = new AbortController();
+    responseAbortRef.current = requestController;
+    autoScrollRef.current = true;
     setInput("");
     setBusy(true);
     setError("");
@@ -287,6 +306,7 @@ function App() {
     try {
       const r = await fetch(`/api/sessions/${id}/messages`, {
         method: "POST",
+        signal: requestController.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: text,
@@ -345,10 +365,24 @@ function App() {
       }
       buf += decoder.decode();
       if (buf.trim()) handleEvent(JSON.parse(buf));
-      await load();
     } catch (e) {
-      setError((e as Error).message);
+      if (
+        requestController.signal.aborted ||
+        (e as Error).name === "AbortError"
+      ) {
+        setMessages((items) =>
+          items.filter(
+            (message) =>
+              message.id !== assistantMessageId || Boolean(message.content),
+          ),
+        );
+      } else {
+        setError((e as Error).message);
+      }
     } finally {
+      if (responseAbortRef.current === requestController)
+        responseAbortRef.current = null;
+      await load().catch(() => undefined);
       setBusy(false);
     }
   }
@@ -388,6 +422,7 @@ function App() {
               className={"session " + (s.id === active ? "active" : "")}
               key={s.id}
               onClick={() => {
+                autoScrollRef.current = true;
                 setActive(s.id);
                 setMobileSessionsOpen(false);
               }}
@@ -445,7 +480,18 @@ function App() {
             +
           </button>
         </header>
-        <div className="messages">
+        <div
+          className="messages"
+          ref={messagesRef}
+          onScroll={(event) => {
+            const container = event.currentTarget;
+            const distanceFromBottom =
+              container.scrollHeight -
+              container.scrollTop -
+              container.clientHeight;
+            autoScrollRef.current = distanceFromBottom < 96;
+          }}
+        >
           {messages.length === 0 && (
             <div className="empty">
               <b>今天想构建什么？</b>
@@ -469,7 +515,11 @@ function App() {
               <article className={m.role} key={m.id || i}>
                 <div className="bubble">
                   {m.role === "assistant" ? (
-                    <ReactMarkdown>{m.content || "▍"}</ReactMarkdown>
+                    <ReactMarkdown
+                      streaming={busy && i === messages.length - 1}
+                    >
+                      {m.content || "▍"}
+                    </ReactMarkdown>
                   ) : (
                     m.content
                   )}
@@ -662,14 +712,18 @@ function App() {
                 <span>{activeMode.name}</span>
               </button>
               <button
-                type="submit"
-                className="send-button"
+                type={busy ? "button" : "submit"}
+                className={`send-button ${busy ? "stop-button" : ""}`}
                 disabled={
-                  busy || uploading || (!input.trim() && !attachments.length)
+                  uploading || (!busy && !input.trim() && !attachments.length)
                 }
-                aria-label="发送消息"
+                aria-label={busy ? "中止回答" : "发送消息"}
+                title={busy ? "中止回答" : "发送消息"}
+                onClick={
+                  busy ? () => responseAbortRef.current?.abort() : undefined
+                }
               >
-                {busy ? "…" : "↑"}
+                {busy ? <span className="stop-icon" /> : "↑"}
               </button>
             </div>
           </div>
