@@ -1,0 +1,114 @@
+.activity-card {
+  position: relative;
+  width: 100%;
+  margin: -12px 0 18px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #68645d;
+  font-size: 13px;
+}
+
+.activity-card::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 30px;
+  bottom: -20px;
+  width: 1px;
+  background: #ddd9d0;
+}
+
+.activity-card summary {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.activity-card summary::-webkit-details-marker {
+  display: none;
+}
+.activity-card summary small {
+  margin-left: auto;
+  color: #99948b;
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+.activity-card[open] summary small {
+  transform: rotate(90deg);
+}
+.activity-card.failed {
+  color: #a94838;
+}
+.activity-icon {
+  width: 18px;
+  text-align: center;
+  color: #b45c3e;
+  font-weight: 700;
+  background: #faf9f6;
+  z-index: 1;
+}
+.activity-card pre {
+  max-height: 260px;
+  margin: 2px 0 2px 26px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #ddd9d0;
+  border-radius: 7px;
+  background: #f1efe9;
+  color: #45413a;
+  font:
+    12px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.activity-card.thinking pre {
+  border: 0;
+  border-left: 2px solid #d6a18d;
+  border-radius: 0;
+  background: transparent;
+  color: #777168;
+  font-family: inherit;
+  font-style: italic;
+}
+
+.activity-detail {
+  margin-left: 26px;
+}
+.activity-detail > code {
+  display: block;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #292824;
+  color: #f1eee7;
+  font:
+    12px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.activity-detail > p {
+  margin: 6px 2px;
+  color: #8a857d;
+}
+.activity-detail > pre {
+  margin-left: 0;
+}
+
+@media (max-width: 700px) {
+  .activity-card {
+    width: 100%;
+    margin-left: 0;
+  }
+}

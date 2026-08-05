@@ -1,0 +1,120 @@
+# Agent 开发指南
+
+本文档用于帮助后续开发代理安全地维护 Claude Code UI。用户使用说明见 `README.md`。
+
+## 核心目标
+
+- 提供接近 Claude Code CLI 和 VS Code 插件的聊天体验。
+- 每个用户只能访问自己的会话、消息、附件和工作区。
+- 保留 Claude 的流式文本与 Thinking、Read、Bash 等执行过程。
+- 桌面端和手机端都必须可用。
+
+## 代码地图
+
+- `src/main.tsx`：认证、会话状态、附件、NDJSON 流读取、执行模式及主要 UI。
+- `src/MarkdownMessage.tsx`：Markdown、GFM、数学公式渲染。
+- `src/styles.css`：应用框架、侧栏、顶部导航和 `700px` 移动端断点。
+- `src/chat-layout.css`：滚动区域和用户/助手消息布局。
+- `src/composer.css`：固定输入区、附件、Commands、Skills 和 Mode 面板。
+- `src/activity.css`：Thinking、工具调用和工具结果。
+- `server/index.ts`：认证、会话、消息、附件和 NDJSON API。
+- `server/auth.ts`：JWT 签发、Cookie 和鉴权。
+- `server/db.ts`：SQLite schema、兼容迁移和用户工作区。
+- `server/claude.ts`：Claude CLI 参数及 `stream-json` 事件解析。
+- `vite.config.ts`：读取 `WEB_PORT` 和 `PORT`，配置 Web UI 端口及 API 代理。
+
+## 必须保持的约束
+
+### 用户隔离
+
+- 所有 session 查询、读取和删除必须同时匹配 `session.id` 与当前 `user_id`。
+- 工作区必须使用 `<WORKSPACE_DIR>/<username>`；未配置时使用 `<DATA_DIR>/workspaces/<username>`，不能回退到所有用户共享的同一个目录。
+- 附件路径必须解析到当前用户工作区内，并防止目录穿越。
+- 不得将其他用户的邮箱、用户名、会话标题或文件路径返回给当前用户。
+
+### 会话保存
+
+- 点击桌面端“新对话”或手机端右上角 `+` 时，不得立即调用 `POST /api/sessions`。
+- 新建操作只重置前端状态。
+- 只有首次发送非空消息或附件时才创建会话。
+- 空白会话不得出现在历史记录中。
+- CLI 首轮使用新的 `--session-id`，后续使用 `--resume`。
+
+### 聊天与流式输出
+
+- 用户消息位于右侧，助手消息位于左侧，不显示 avatar。
+- 输入框固定在聊天区域底部，消息列表独立滚动。
+- NDJSON 必须逐行解析，并保留未完成的 buffer。
+- `delta` 追加到当前助手消息。
+- `activity` 插入助手消息之前，并持久化到数据库。
+- Markdown、GFM 和 MathJax 渲染不能因流式更新失效。
+
+### Claude 权限模式
+
+前后端允许值必须保持一致：
+
+- `auto`
+- `plan`
+- `manual`
+- `acceptEdits`
+
+修改 Mode 时同步检查 UI 文案、图标、Zod schema 和传给 Claude CLI 的 `--permission-mode`。
+
+### 响应式布局
+
+- `index.html` 必须保留 `width=device-width` 的 viewport 声明。
+- 桌面端显示固定历史会话侧栏。
+- `max-width: 700px` 时侧栏变为默认关闭的抽屉。
+- 手机端左上角汉堡按钮打开历史会话，右上角 `+` 新建本地空白会话。
+- 抽屉通过遮罩、关闭按钮、会话选择和新建动作关闭。
+- 输入框应考虑 `env(safe-area-inset-bottom)`。
+
+## 数据与安全边界
+
+- 密码只允许以 bcrypt hash 保存。
+- 登录状态使用 HttpOnly、SameSite Cookie。
+- 生产环境必须配置强随机 `JWT_SECRET` 和 HTTPS。
+- 上传限制为最多 10 个文件、单文件 20 MB；改变前后端限制时应同步修改。
+- `CLAUDE_ALLOWED_TOOLS=Bash` 只是 CLI 权限配置，不提供操作系统沙箱。
+- 不受信任的多用户部署需要容器或微虚拟机级隔离。
+
+## 修改流程
+
+1. 先定位对应前端状态、API、数据库和 CLI 层，确认是否需要联动修改。
+2. 保留现有数据兼容性；数据库 schema 变更需要提供幂等迁移。
+3. 使用 `apply_patch` 编辑文件，并避免覆盖无关改动。
+4. 格式化所改文件。
+5. 运行构建检查。
+6. 涉及 UI 时用桌面和手机视口做真实浏览器验证。
+
+常用检查命令：
+
+```bash
+npx prettier --write <changed-files>
+npm run build
+npm test
+```
+
+## UI 验证清单
+
+- 登录与退出是否正常。
+- 用户 A 是否无法访问用户 B 的会话 URL。
+- 点击“新对话”后历史列表是否没有新增空记录。
+- 首次发送内容后会话是否出现并正确生成标题。
+- 用户/助手消息是否保持左右布局。
+- Markdown、代码块、表格和数学公式是否正常。
+- Thinking、Read、Bash 和执行结果是否按顺序展示。
+- Commands、Skills、Mode 面板是否位于输入框上方且不遮挡输入。
+- 附件是否只能来自当前用户工作区。
+- 手机端汉堡菜单、抽屉遮罩、右上角新建和底部输入框是否正常。
+
+## 文档同步
+
+以下变更完成后必须同步更新 `README.md` 和本文件：
+
+- 环境变量、启动命令或端口
+- API 路径或 NDJSON 事件格式
+- 数据库 schema 或工作区路径
+- Claude CLI 参数、工具权限或执行模式
+- 上传限制、认证方式或安全模型
+- 桌面/手机端核心交互

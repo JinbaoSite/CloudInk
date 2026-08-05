@@ -1,0 +1,306 @@
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 11px 12px 9px;
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: 58px;
+  padding: 3px 2px 8px;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 2px -12px -9px;
+  padding: 8px 12px 9px;
+  border-top: 1px solid #e4e1da;
+}
+
+.composer-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.composer-actions-left {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.file-input {
+  display: none;
+}
+
+.attachment-list {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 1px 0 3px;
+}
+
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  flex: 0 0 auto;
+  padding: 5px 6px 5px 8px;
+  border: 1px solid #ddd9d0;
+  border-radius: 7px;
+  background: #f4f2ec;
+  color: #625e56;
+  font-size: 11px;
+}
+
+.attachment-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip button {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #8a857c;
+  line-height: 1;
+}
+
+.attachment-chip button:hover {
+  background: #e5e1d8;
+}
+
+.composer .add-button,
+.composer .slash-button,
+.composer .send-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.composer .add-button {
+  background: transparent;
+  color: #716c63;
+}
+
+.composer .slash-button {
+  background: transparent;
+  color: #716c63;
+  font:
+    18px/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.composer .add-button:hover,
+.composer .slash-button:hover {
+  background: #f0eee8;
+}
+
+.slash-menu {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: 100%;
+  max-height: min(420px, 60vh);
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid #d9d5cc;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 36px #2f291c24;
+}
+
+.slash-menu-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 8px 4px;
+  color: #99938a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.slash-menu-heading small {
+  color: #aaa49a;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.slash-empty {
+  padding: 12px 8px;
+  color: #99938a;
+  font-size: 12px;
+  text-align: center;
+}
+
+.slash-menu > button {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.38fr) 1fr;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #504b44;
+  text-align: left;
+}
+
+.slash-menu > button:hover {
+  background: #f1efe9;
+}
+.slash-menu > button code {
+  font-size: 12px;
+  font-weight: 600;
+}
+.slash-menu > button > span {
+  overflow: hidden;
+  color: #89837a;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slash-menu > .slash-custom {
+  display: flex;
+  color: #817b72;
+  font-size: 12px;
+}
+
+.composer .send-button {
+  align-self: auto;
+  background: #c15f3c;
+  color: white;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.composer .send-button:disabled {
+  opacity: 0.4;
+}
+
+.composer .mode-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  outline: none;
+  background: transparent;
+  color: #5f5a52;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.composer .mode-picker:hover,
+.composer .mode-picker:focus {
+  background: #f0eee8;
+}
+.composer .mode-picker:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.mode-menu {
+  position: absolute;
+  z-index: 21;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: min(420px, 100%);
+  padding: 7px;
+  border: 1px solid #d9d5cc;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 12px 36px #2f291c24;
+}
+
+.mode-menu-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 8px 8px;
+  color: #6b665e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mode-menu-heading small {
+  color: #a09a91;
+  font-weight: 400;
+}
+.mode-menu > button {
+  display: grid;
+  grid-template-columns: 26px 1fr 20px;
+  width: 100%;
+  min-height: 50px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #514d46;
+  text-align: left;
+}
+
+.mode-menu > button:hover,
+.mode-menu > button.active {
+  background: #f1efe9;
+}
+.mode-icon {
+  color: #b45c3e;
+  font-size: 16px;
+  text-align: center;
+}
+.mode-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.mode-copy b {
+  font-size: 12px;
+  font-weight: 600;
+}
+.mode-copy small {
+  color: #8f8980;
+  font-size: 11px;
+}
+.mode-check {
+  color: #b45c3e;
+  font-size: 12px;
+  text-align: right;
+}
+
+@media (max-width: 700px) {
+  .mode-menu-heading small {
+    display: none;
+  }
+}
