@@ -5,10 +5,70 @@
   padding: 11px 12px 9px;
 }
 
-.composer textarea {
+.composer-input-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 58px;
+}
+
+.composer textarea,
+.composer-input-highlight {
   width: 100%;
   min-height: 58px;
   padding: 3px 2px 8px;
+  border: 0;
+  font: inherit;
+  line-height: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.composer textarea {
+  position: relative;
+  z-index: 1;
+  display: block;
+  max-height: 240px;
+  overflow-y: auto;
+  background: transparent;
+  color: transparent;
+  caret-color: #282621;
+  -webkit-text-fill-color: transparent;
+}
+
+.composer textarea::placeholder {
+  color: #99938a;
+  -webkit-text-fill-color: #99938a;
+}
+
+.composer textarea::selection {
+  background: #b9c9da80;
+}
+
+.composer-input-highlight {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  color: #38342f;
+}
+
+.composer-input-highlight mark {
+  padding: 0;
+  border-radius: 3px;
+  background: #ebe8e1;
+  color: #4e4942;
+  font: inherit;
+}
+
+.composer-input-highlight mark.command {
+  color: #5d5850;
+}
+
+.composer-input-highlight mark.mention {
+  background: #e4e7e8;
+  color: #46545a;
 }
 
 .composer-actions {
@@ -115,7 +175,8 @@
   background: #f0eee8;
 }
 
-.slash-menu {
+.slash-menu,
+.mention-menu {
   position: absolute;
   z-index: 20;
   left: 0;
@@ -128,6 +189,111 @@
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 12px 36px #2f291c24;
+  scrollbar-color: #d4d0c8 transparent;
+  scrollbar-width: thin;
+}
+
+.slash-menu::-webkit-scrollbar,
+.mention-menu::-webkit-scrollbar {
+  width: 4px;
+}
+
+.slash-menu::-webkit-scrollbar-track,
+.mention-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.slash-menu::-webkit-scrollbar-thumb,
+.mention-menu::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #d4d0c8;
+}
+
+.slash-menu::-webkit-scrollbar-thumb:hover,
+.mention-menu::-webkit-scrollbar-thumb:hover {
+  background: #bbb6ad;
+}
+
+.mention-menu-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 8px 6px;
+  color: #6b665e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mention-menu-heading small {
+  color: #a09a91;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.mention-menu > button {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #504b44;
+  text-align: left;
+}
+
+.mention-menu > button:hover {
+  background: #f1efe9;
+}
+
+.mention-file-icon {
+  display: grid;
+  width: 17px;
+  height: 19px;
+  place-items: center;
+  justify-self: center;
+  color: #777168;
+}
+
+.mention-file-icon svg {
+  display: block;
+  width: 17px;
+  height: 19px;
+  fill: currentColor;
+}
+
+.mention-file-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mention-file-copy b,
+.mention-file-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-file-copy b {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mention-file-copy small {
+  color: #918b82;
+  font-size: 10px;
+}
+
+.mention-empty {
+  padding: 16px 8px;
+  color: #99938a;
+  font-size: 12px;
+  text-align: center;
 }
 
 .slash-menu-heading {
@@ -319,9 +485,19 @@
   background: #f1efe9;
 }
 .mode-icon {
-  color: #b45c3e;
-  font-size: 16px;
+  display: grid;
+  place-items: center;
+  color: #6f6960;
   text-align: center;
+}
+.mode-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.mode-picker-icon {
+  width: 12px;
+  height: 12px;
+  color: #777168;
 }
 .mode-copy {
   display: flex;
@@ -338,7 +514,7 @@
   font-size: 11px;
 }
 .mode-check {
-  color: #b45c3e;
+  color: #6f6960;
   font-size: 12px;
   text-align: right;
 }

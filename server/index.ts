@@ -96,6 +96,46 @@ app.get("/api/me", requireAuth, (req, res) => {
 app.get("/api/config", requireAuth, async (_req, res) =>
   res.json({ model: await detectedModel }),
 );
+app.get("/api/workspace/files", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const user = db
+    .prepare("SELECT username FROM users WHERE id=?")
+    .get(uid) as { username: string } | undefined;
+  if (!user) return res.status(401).json({ error: "用户不存在" });
+
+  const workspace = path.join(workspaceRoot, user.username);
+  fs.mkdirSync(workspace, { recursive: true });
+  const ignored = new Set([".git", "node_modules", ".claude", "dist", "build"]);
+  const files: Array<{ name: string; path: string; size: number }> = [];
+  const pending = [workspace];
+  while (pending.length && files.length < 2000) {
+    const directory = pending.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (files.length >= 2000 || entry.isSymbolicLink()) continue;
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignored.has(entry.name)) pending.push(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        files.push({
+          name: entry.name,
+          path: path.relative(workspace, absolutePath).split(path.sep).join("/"),
+          size: fs.statSync(absolutePath).size,
+        });
+      } catch {}
+    }
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  res.json({ files, truncated: files.length >= 2000 });
+});
 app.post("/api/files", requireAuth, (req, res) => {
   upload.array("files", 10)(req, res, (error) => {
     if (error) {
