@@ -5,6 +5,236 @@
   padding: 11px 12px 9px;
 }
 
+.submit-answer-panel {
+  position: absolute;
+  z-index: 24;
+  left: 0;
+  bottom: calc(100% + 10px);
+  width: 100%;
+  max-height: min(560px, 68vh);
+  overflow: hidden;
+  border: 1px solid #d4d0c8;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 14px 40px #2f291c1f;
+  color: #37332d;
+}
+
+.submit-answer-panel > header,
+.submit-answer-panel > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+}
+
+.submit-answer-panel > header {
+  border-bottom: 1px solid #ebe8e1;
+}
+
+.submit-answer-panel > header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.submit-answer-panel > header b {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.answer-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6e6961;
+  box-shadow: 0 0 0 3px #eeece7;
+}
+
+.composer .answer-dismiss {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8b857c;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.composer .answer-dismiss:hover {
+  background: #f0eee9;
+}
+
+.answer-questions {
+  max-height: min(430px, 52vh);
+  padding: 12px 13px;
+  overflow-y: auto;
+  scrollbar-color: #d4d0c8 transparent;
+  scrollbar-width: thin;
+}
+
+.answer-questions fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.answer-questions fieldset + fieldset {
+  margin-top: 17px;
+  padding-top: 16px;
+  border-top: 1px solid #ebe8e1;
+}
+
+.answer-questions legend {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 9px;
+  padding: 0;
+}
+
+.answer-questions legend small {
+  color: #969087;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.answer-questions legend span {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.answer-options {
+  display: grid;
+  gap: 5px;
+}
+
+.composer .answer-options > button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  width: 100%;
+  height: auto;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f7f6f2;
+  color: #48433c;
+  cursor: pointer;
+  text-align: left;
+}
+
+.composer .answer-options > button:hover {
+  background: #f0eee9;
+}
+
+.composer .answer-options > button.selected {
+  border-color: #bdb8ae;
+  background: #eeece7;
+}
+
+.answer-options button > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.answer-options button b {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.answer-options button small {
+  overflow: hidden;
+  color: #8c867d;
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.answer-radio,
+.answer-checkbox {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid #aaa49b;
+  background: #fff;
+}
+
+.answer-radio { border-radius: 50%; }
+.answer-checkbox { border-radius: 3px; }
+.answer-radio i,
+.answer-checkbox i {
+  width: 6px;
+  height: 6px;
+  border-radius: inherit;
+  background: #5f5a52;
+}
+
+.answer-questions input {
+  width: 100%;
+  height: 34px;
+  margin-top: 7px;
+  padding: 0 9px;
+  border: 1px solid #ddd9d1;
+  border-radius: 7px;
+  outline: none;
+  background: #fff;
+  color: #423e38;
+  font-size: 11px;
+}
+
+.answer-questions input:focus {
+  border-color: #aaa49b;
+  box-shadow: 0 0 0 3px #77716812;
+}
+
+.submit-answer-panel > footer {
+  border-top: 1px solid #ebe8e1;
+  background: #faf9f6;
+}
+
+.submit-answer-panel > footer > span {
+  color: #969087;
+  font-size: 10px;
+}
+
+.composer .answer-submit {
+  width: auto;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: #4d4942;
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.composer .answer-submit:hover:not(:disabled) {
+  background: #37342f;
+}
+
+.composer .answer-submit:disabled {
+  cursor: default;
+  opacity: .38;
+}
+
 .composer-input-wrap {
   position: relative;
   width: 100%;
@@ -397,10 +627,19 @@
 
 .stop-icon {
   display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  background: currentColor;
+  width: 15px;
+  height: 15px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  background: transparent;
+  animation: stop-button-spin .72s linear infinite;
+}
+
+@keyframes stop-button-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .composer .mode-picker {

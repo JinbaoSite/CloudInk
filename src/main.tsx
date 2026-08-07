@@ -3,7 +3,9 @@ import { createRoot } from "react-dom/client";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faBox,
+  faCheck,
   faComments,
+  faCopy,
   faDatabase,
   faFile,
   faFileCode,
@@ -20,6 +22,7 @@ import {
   faListCheck,
   faPalette,
   faPenToSquare,
+  faRotateRight,
   faSliders,
   faTerminal,
   faWandMagicSparkles,
@@ -38,15 +41,33 @@ type Activity = {
   detail?: string;
   toolUseId?: string;
   isError?: boolean;
+  toolName?: string;
+  output?: string;
 };
 type Message = {
   id?: string;
-  role: "user" | "assistant" | "activity";
+  role: "user" | "assistant" | "activity" | "metrics";
   content: string;
+  metrics?: ResponseMetrics;
+};
+type ResponseMetrics = {
+  durationMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
 };
 type ExecutionMode = "auto" | "plan" | "manual" | "acceptEdits";
 type Attachment = { name: string; path: string; size: number };
 type WorkspaceFile = { name: string; path: string; size: number };
+type QuestionOption = { label: string; description?: string };
+type ClaudeQuestion = {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options?: QuestionOption[];
+};
+type PendingQuestion = { toolUseId: string; questions: ClaudeQuestion[] };
 type FileTreeNode = {
   name: string;
   path: string;
@@ -100,6 +121,68 @@ const slashSkills = [
 ];
 function localId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+function parseActivity(message: Message) {
+  if (message.role !== "activity") return null;
+  try {
+    return JSON.parse(message.content) as Activity;
+  } catch {
+    return null;
+  }
+}
+function mergeActivityMessages(messages: Message[]) {
+  const metricsByMessage = new Map<string, ResponseMetrics>();
+  for (const message of messages) {
+    if (message.role !== "metrics") continue;
+    try {
+      const stored = JSON.parse(message.content) as ResponseMetrics & {
+        messageId?: string;
+      };
+      if (stored.messageId) metricsByMessage.set(stored.messageId, stored);
+    } catch {}
+  }
+  const merged: Message[] = [];
+  const tools = new Map<string, number>();
+  for (const message of messages) {
+    if (message.role === "metrics") continue;
+    const hydratedMessage =
+      message.role === "assistant" && message.id && metricsByMessage.has(message.id)
+        ? { ...message, metrics: metricsByMessage.get(message.id) }
+        : message;
+    const activity = parseActivity(message);
+    if (!activity?.toolUseId) {
+      merged.push(hydratedMessage);
+      continue;
+    }
+    if (activity.kind === "tool") {
+      const previousIndex = tools.get(activity.toolUseId);
+      if (previousIndex != null) merged[previousIndex] = message;
+      else {
+        tools.set(activity.toolUseId, merged.length);
+        merged.push(message);
+      }
+      continue;
+    }
+    if (activity.kind === "tool_result") {
+      const toolIndex = tools.get(activity.toolUseId);
+      if (toolIndex != null) {
+        const tool = parseActivity(merged[toolIndex]);
+        if (tool) {
+          merged[toolIndex] = {
+            ...merged[toolIndex],
+            content: JSON.stringify({
+              ...tool,
+              output: activity.detail || "",
+              isError: activity.isError,
+            }),
+          };
+          continue;
+        }
+      }
+    }
+    merged.push(message);
+  }
+  return merged;
 }
 async function api(url: string, options?: RequestInit) {
   const r = await fetch("/api" + url, {
@@ -204,12 +287,17 @@ function App() {
     [showModeMenu, setShowModeMenu] = useState(false),
     [sidebarView, setSidebarView] = useState<"sessions" | "files">("sessions"),
     [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth),
+    [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null),
+    [questionAnswers, setQuestionAnswers] = useState<Record<number, string[]>>({}),
+    [customQuestionAnswers, setCustomQuestionAnswers] = useState<Record<number, string>>({}),
+    [copiedMessageId, setCopiedMessageId] = useState(""),
     [mobileSessionsOpen, setMobileSessionsOpen] = useState(false),
     [uploading, setUploading] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerFormRef = useRef<HTMLFormElement>(null);
   const inputHighlightRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const modeButtonRef = useRef<HTMLButtonElement>(null);
@@ -300,13 +388,16 @@ function App() {
   }, [showSlashMenu]);
   useEffect(() => {
     if (!active) return;
+    setPendingQuestion(null);
+    setQuestionAnswers({});
+    setCustomQuestionAnswers({});
     if (skipMessageLoadForRef.current === active) {
       skipMessageLoadForRef.current = "";
       return;
     }
     let cancelled = false;
     api(`/sessions/${active}/messages`).then((items: Message[]) => {
-      if (!cancelled) setMessages(items);
+      if (!cancelled) setMessages(mergeActivityMessages(items));
     });
     return () => {
       cancelled = true;
@@ -341,6 +432,9 @@ function App() {
     setMessages([]);
     setInput("");
     setAttachments([]);
+    setPendingQuestion(null);
+    setQuestionAnswers({});
+    setCustomQuestionAnswers({});
     setError("");
     setShowSlashMenu(false);
     setShowModeMenu(false);
@@ -388,6 +482,39 @@ function App() {
       const cursor = position ?? textarea.value.length;
       textarea.setSelectionRange(cursor, cursor);
     });
+  }
+  async function copyResponse(content: string, messageId: string) {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(content);
+      else {
+        const copyTarget = document.createElement("textarea");
+        copyTarget.value = content;
+        copyTarget.style.position = "fixed";
+        copyTarget.style.opacity = "0";
+        document.body.appendChild(copyTarget);
+        copyTarget.select();
+        document.execCommand("copy");
+        copyTarget.remove();
+      }
+      setCopiedMessageId(messageId);
+      window.setTimeout(
+        () => setCopiedMessageId((current) => (current === messageId ? "" : current)),
+        1600,
+      );
+    } catch {
+      setError("复制失败，请手动选择内容复制");
+    }
+  }
+  function retryResponse(messageIndex: number) {
+    if (busy) return;
+    const userMessage = messages
+      .slice(0, messageIndex)
+      .reverse()
+      .find((message) => message.role === "user");
+    if (!userMessage?.content.trim()) return;
+    setInput(userMessage.content);
+    autoScrollRef.current = true;
+    requestAnimationFrame(() => composerFormRef.current?.requestSubmit());
   }
   function insertSlashCommand(command = "/") {
     let cursorPosition: number | undefined;
@@ -491,8 +618,26 @@ function App() {
         activity?: Activity;
         error?: string;
         model?: string;
+        question?: PendingQuestion;
+        metrics?: ResponseMetrics;
       }) => {
         if (evt.type === "model" && evt.model) setCurrentModel(evt.model);
+        if (evt.type === "question" && evt.question) {
+          setPendingQuestion(evt.question);
+          setQuestionAnswers({});
+          setCustomQuestionAnswers({});
+          setShowModeMenu(false);
+          setShowSlashMenu(false);
+          setShowMentionMenu(false);
+        }
+        if (evt.type === "metrics" && evt.metrics)
+          setMessages((items) =>
+            items.map((message) =>
+              message.id === assistantMessageId
+                ? { ...message, metrics: evt.metrics }
+                : message,
+            ),
+          );
         if (evt.type === "delta" && evt.text)
           setMessages((items) =>
             items.map((message) =>
@@ -501,8 +646,33 @@ function App() {
                 : message,
             ),
           );
+        if (evt.type === "replace_answer")
+          setMessages((items) =>
+            items.map((message) =>
+              message.id === assistantMessageId
+                ? { ...message, content: evt.text || "" }
+                : message,
+            ),
+          );
         if (evt.type === "activity" && evt.activity)
           setMessages((items) => {
+            if (evt.activity?.toolUseId) {
+              const existingIndex = items.findIndex((message) => {
+                const existing = parseActivity(message);
+                return (
+                  existing?.kind === "tool" &&
+                  existing.toolUseId === evt.activity?.toolUseId
+                );
+              });
+              if (existingIndex >= 0) {
+                const next = [...items];
+                next[existingIndex] = {
+                  ...next[existingIndex],
+                  content: JSON.stringify(evt.activity),
+                };
+                return next;
+              }
+            }
             const assistantIndex = items.findIndex(
               (message) => message.id === assistantMessageId,
             );
@@ -531,6 +701,12 @@ function App() {
       }
       buf += decoder.decode();
       if (buf.trim()) handleEvent(JSON.parse(buf));
+      setMessages((items) =>
+        items.filter(
+          (message) =>
+            message.id !== assistantMessageId || Boolean(message.content),
+        ),
+      );
     } catch (e) {
       if (
         requestController.signal.aborted ||
@@ -554,6 +730,23 @@ function App() {
   }
   if (me === undefined) return <div className="center">加载中…</div>;
   if (!me) return <Login onDone={() => location.reload()} />;
+  const lastActivityEntry = messages.reduce<{
+    index: number;
+    activity: Activity | null;
+  }>(
+    (current, message, index) => {
+      const parsed = parseActivity(message);
+      return parsed ? { index, activity: parsed } : current;
+    },
+    { index: -1, activity: null },
+  );
+  const lastActivityIndex = lastActivityEntry.index;
+  const lastActivity = lastActivityEntry.activity;
+  const conversationPhase = busy
+    ? lastActivity?.kind === "tool" && lastActivity.output == null
+      ? { label: "Running", detail: activityDisplayLabel(lastActivity) }
+      : { label: "Thinking", detail: "Claude is working" }
+    : null;
   return (
     <div
       className="shell"
@@ -773,8 +966,23 @@ function App() {
               } catch {
                 activity = { kind: "status", label: m.content };
               }
-              return <ActivityCard activity={activity} key={m.id || i} />;
+              return (
+                <ActivityCard
+                  activity={activity}
+                  inProgress={
+                    busy &&
+                    i === lastActivityIndex &&
+                    (activity.kind === "thinking" ||
+                      (activity.kind === "tool" && activity.output == null))
+                  }
+                  key={m.id || i}
+                />
+              );
             }
+            if (m.role === "metrics") return null;
+            const messageKey = m.id || `assistant-${i}`;
+            const streamingThisMessage =
+              m.role === "assistant" && busy && i === messages.length - 1;
             return (
               <article className={m.role} key={m.id || i}>
                 <div className="bubble">
@@ -787,13 +995,98 @@ function App() {
                   ) : (
                     m.content
                   )}
+                  {m.role === "assistant" &&
+                    m.content &&
+                    !streamingThisMessage && (
+                      <div className="response-actions" aria-label="回复操作">
+                        {m.metrics && <ResponseMetricsLabel metrics={m.metrics} />}
+                        <button
+                          type="button"
+                          title="复制回复"
+                          aria-label="复制回复"
+                          onClick={() => void copyResponse(m.content, messageKey)}
+                        >
+                          <FontAwesomeIcon
+                            icon={copiedMessageId === messageKey ? faCheck : faCopy}
+                          />
+                          <span>
+                            {copiedMessageId === messageKey ? "已复制" : "复制"}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          title="重试此问题"
+                          aria-label="重试此问题"
+                          disabled={busy}
+                          onClick={() => retryResponse(i)}
+                        >
+                          <FontAwesomeIcon icon={faRotateRight} />
+                          <span>重试</span>
+                        </button>
+                      </div>
+                    )}
                 </div>
               </article>
             );
           })}
+          {conversationPhase && (
+            <div className="conversation-live-status" role="status" aria-live="polite">
+              <span className="live-status-spinner" aria-hidden="true" />
+              <strong>{conversationPhase.label}</strong>
+              <span className="live-status-dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+              <small>{conversationPhase.detail}</small>
+            </div>
+          )}
           {error && <div className="error">{error}</div>}
         </div>
-        <form className="composer" onSubmit={send}>
+        <form className="composer" ref={composerFormRef} onSubmit={send}>
+          {pendingQuestion && (
+            <SubmitAnswerPanel
+              pending={pendingQuestion}
+              answers={questionAnswers}
+              customAnswers={customQuestionAnswers}
+              busy={busy}
+              onToggle={(questionIndex, label, multiSelect) =>
+                setQuestionAnswers((current) => {
+                  const selected = current[questionIndex] || [];
+                  return {
+                    ...current,
+                    [questionIndex]: multiSelect
+                      ? selected.includes(label)
+                        ? selected.filter((item) => item !== label)
+                        : [...selected, label]
+                      : [label],
+                  };
+                })
+              }
+              onCustomAnswer={(questionIndex, value) =>
+                setCustomQuestionAnswers((current) => ({
+                  ...current,
+                  [questionIndex]: value,
+                }))
+              }
+              onDismiss={() => setPendingQuestion(null)}
+              onSubmit={() => {
+                const response = pendingQuestion.questions
+                  .map((question, index) => {
+                    const selections = questionAnswers[index] || [];
+                    const custom = customQuestionAnswers[index]?.trim();
+                    const answer = [...selections, ...(custom ? [custom] : [])].join(", ");
+                    return `${question.question}\n${answer}`;
+                  })
+                  .join("\n\n");
+                setPendingQuestion(null);
+                setQuestionAnswers({});
+                setCustomQuestionAnswers({});
+                setInput(response);
+                requestAnimationFrame(() => composerFormRef.current?.requestSubmit());
+              }}
+            />
+          )}
           {showModeMenu && (
             <div className="mode-menu" ref={modeMenuRef}>
               <div className="mode-menu-heading">
@@ -1064,6 +1357,131 @@ function formatFileSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function SubmitAnswerPanel({
+  pending,
+  answers,
+  customAnswers,
+  busy,
+  onToggle,
+  onCustomAnswer,
+  onDismiss,
+  onSubmit,
+}: {
+  pending: PendingQuestion;
+  answers: Record<number, string[]>;
+  customAnswers: Record<number, string>;
+  busy: boolean;
+  onToggle: (questionIndex: number, label: string, multiSelect: boolean) => void;
+  onCustomAnswer: (questionIndex: number, value: string) => void;
+  onDismiss: () => void;
+  onSubmit: () => void;
+}) {
+  const complete = pending.questions.every(
+    (_question, index) =>
+      Boolean(answers[index]?.length) || Boolean(customAnswers[index]?.trim()),
+  );
+  return (
+    <section className="submit-answer-panel" aria-label="Claude 需要你的回答">
+      <header>
+        <div>
+          <span className="answer-status-dot" aria-hidden="true" />
+          <b>Claude needs your input</b>
+        </div>
+        <button type="button" className="answer-dismiss" onClick={onDismiss} aria-label="关闭">
+          ×
+        </button>
+      </header>
+      <div className="answer-questions">
+        {pending.questions.map((question, questionIndex) => (
+          <fieldset key={`${pending.toolUseId}-${questionIndex}`}>
+            <legend>
+              {question.header && <small>{question.header}</small>}
+              <span>{question.question}</span>
+            </legend>
+            {question.options?.length ? (
+              <div className="answer-options">
+                {question.options.map((option) => {
+                  const selected = answers[questionIndex]?.includes(option.label) || false;
+                  return (
+                    <button
+                      type="button"
+                      className={selected ? "selected" : ""}
+                      aria-pressed={selected}
+                      key={option.label}
+                      onClick={() =>
+                        onToggle(questionIndex, option.label, Boolean(question.multiSelect))
+                      }
+                    >
+                      <span className={question.multiSelect ? "answer-checkbox" : "answer-radio"}>
+                        {selected && <i />}
+                      </span>
+                      <span>
+                        <b>{option.label}</b>
+                        {option.description && <small>{option.description}</small>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            <input
+              type="text"
+              value={customAnswers[questionIndex] || ""}
+              onChange={(event) => onCustomAnswer(questionIndex, event.target.value)}
+              placeholder={question.options?.length ? "Other answer (optional)" : "Type your answer…"}
+            />
+          </fieldset>
+        ))}
+      </div>
+      <footer>
+        <span>{busy ? "等待 Claude 完成当前步骤…" : "提交后将继续当前会话"}</span>
+        <button type="button" className="answer-submit" disabled={busy || !complete} onClick={onSubmit}>
+          Submit answer
+        </button>
+      </footer>
+    </section>
+  );
+}
+
+function formatTokenCount(value: number) {
+  if (value < 1_000) return String(Math.round(value));
+  if (value < 1_000_000)
+    return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
+  return `${(value / 1_000_000).toFixed(1)}m`;
+}
+
+function formatDuration(durationMs: number) {
+  if (durationMs < 1_000) return `${Math.round(durationMs)}ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(1)}s`;
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1_000);
+  return `${minutes}m ${seconds}s`;
+}
+
+function ResponseMetricsLabel({ metrics }: { metrics: ResponseMetrics }) {
+  const totalTokens = metrics.inputTokens + metrics.outputTokens;
+  const details = [
+    `耗时：${formatDuration(metrics.durationMs)}`,
+    `输入：${metrics.inputTokens.toLocaleString()} tokens`,
+    `输出：${metrics.outputTokens.toLocaleString()} tokens`,
+    metrics.cacheReadTokens
+      ? `缓存读取：${metrics.cacheReadTokens.toLocaleString()} tokens`
+      : "",
+    metrics.cacheCreationTokens
+      ? `缓存写入：${metrics.cacheCreationTokens.toLocaleString()} tokens`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <span className="response-metrics" title={details}>
+      <span>{formatDuration(metrics.durationMs)}</span>
+      <i aria-hidden="true" />
+      <span>{formatTokenCount(totalTokens)} tokens</span>
+    </span>
+  );
+}
+
 function HighlightedComposerInput({ value }: { value: string }) {
   const parts: React.ReactNode[] = [];
   const tokenPattern = /(^|\s)(\/[^\s]*|@(?:"[^"]*"|[^\s@]*))/gm;
@@ -1208,7 +1626,14 @@ function WorkspaceFileRow({ file }: { file: WorkspaceFile }) {
   );
 }
 
-function ActivityCard({ activity }: { activity: Activity }) {
+function ActivityCard({
+  activity,
+  inProgress = false,
+}: {
+  activity: Activity;
+  inProgress?: boolean;
+}) {
+  const title = activityDisplayTitle(activity);
   const icon =
     activity.kind === "thinking"
       ? "✦"
@@ -1216,42 +1641,134 @@ function ActivityCard({ activity }: { activity: Activity }) {
         ? "◌"
         : activity.isError
           ? "×"
+          : activity.kind === "tool" && activity.output != null
+            ? "✓"
           : activity.kind === "tool_result"
             ? "✓"
             : "⌘";
   return (
     <details
-      className={`activity-card ${activity.kind} ${activity.isError ? "failed" : ""}`}
+      className={`activity-card ${activity.kind} ${activity.isError ? "failed" : ""} ${inProgress ? "in-progress" : ""}`}
     >
       <summary>
         <span className="activity-icon">{icon}</span>
-        <span>{activity.label}</span>
-        {activity.detail && <small aria-label="展开详情">&gt;</small>}
+        <span className="activity-label">
+          <strong>{title.keyword}</strong>
+          {title.description && (
+            <span className="activity-description">{title.description}</span>
+          )}
+          {inProgress && activity.kind === "tool" && (
+            <span className="activity-running">
+              Running<span aria-hidden="true">…</span>
+            </span>
+          )}
+        </span>
+        {(activity.detail || activity.output != null) && (
+          <small aria-label="展开详情">&gt;</small>
+        )}
       </summary>
-      {activity.detail && <ActivityDetail activity={activity} />}
+      {(activity.detail || activity.output != null) && (
+        <ActivityDetail activity={activity} />
+      )}
     </details>
   );
 }
 
 function ActivityDetail({ activity }: { activity: Activity }) {
+  if (activity.kind === "thinking") {
+    return (
+      <div className="thinking-markdown">
+        <ReactMarkdown>{activity.detail || ""}</ReactMarkdown>
+      </div>
+    );
+  }
   if (activity.kind === "tool") {
-    try {
-      const input = JSON.parse(activity.detail || "{}") as Record<
-        string,
-        unknown
-      >;
-      const primary = input.command || input.file_path || input.path;
-      return (
-        <div className="activity-detail">
-          {primary != null && <code>{String(primary)}</code>}
-          {input.description != null && <p>{String(input.description)}</p>}
-          <pre>{JSON.stringify(input, null, 2)}</pre>
-        </div>
-      );
-    } catch {
-      // Fall through to the plain output renderer.
-    }
+    return (
+      <div className="activity-detail tool-io">
+        <section>
+          <b>IN</b>
+          <pre>{formatActivityInput(activity)}</pre>
+        </section>
+        {activity.output != null && (
+          <section className={activity.isError ? "io-error" : ""}>
+            <b>OUT</b>
+            <pre>{activity.output || "(no output)"}</pre>
+          </section>
+        )}
+      </div>
+    );
   }
   return <pre>{activity.detail}</pre>;
+}
+
+function activityDisplayLabel(activity: Activity) {
+  if (activity.kind !== "tool") return activity.label;
+  try {
+    const input = JSON.parse(activity.detail || "{}") as Record<string, unknown>;
+    const name = activity.toolName || activity.label;
+    const compact = (value: unknown) => {
+      const text = String(value || "").replace(/\s+/g, " ").trim();
+      return text.length > 140 ? `${text.slice(0, 139)}…` : text;
+    };
+    const withValue = (label: string, value: unknown) => {
+      const text = compact(value);
+      return text ? `${label} ${text}` : label;
+    };
+    if (name === "Read") return withValue("Read", input.file_path || input.path);
+    if (["Write", "Edit", "MultiEdit"].includes(name))
+      return withValue(name, input.file_path || input.path);
+    if (name === "Bash")
+      return withValue("Bash", input.description || input.command);
+    if (name === "Agent" || name === "Task")
+      return withValue("Agent", input.description || input.subagent_type || input.prompt);
+    if (name === "Glob" || name === "Grep")
+      return withValue(name, input.pattern);
+    if (name === "WebFetch") return withValue(name, input.url);
+    if (name === "WebSearch") return withValue(name, input.query);
+    if (name === "Skill") return withValue(name, input.skill || input.name);
+    if (name === "mcp__ui__ask_user") return "Ask user";
+    return activity.label;
+  } catch {
+    return activity.label;
+  }
+}
+
+function activityDisplayTitle(activity: Activity) {
+  const label = activityDisplayLabel(activity);
+  if (activity.kind !== "tool") return { keyword: label, description: "" };
+  const rawName = activity.toolName || activity.label.split(" ")[0];
+  const keyword =
+    rawName === "Task"
+      ? "Agent"
+      : rawName === "mcp__ui__ask_user"
+        ? "Ask user"
+        : rawName;
+  const description = label.startsWith(`${keyword} `)
+    ? label.slice(keyword.length + 1)
+    : label === keyword
+      ? ""
+      : label;
+  return { keyword, description };
+}
+
+function formatActivityInput(activity: Activity) {
+  try {
+    const input = JSON.parse(activity.detail || "{}") as Record<string, unknown>;
+    const name = activity.toolName || activity.label.split(" ")[0];
+    if (name === "Bash" && input.command != null) return String(input.command);
+    if (name === "Read") {
+      const fields = [
+        input.file_path || input.path,
+        input.offset != null ? `offset: ${input.offset}` : "",
+        input.limit != null ? `limit: ${input.limit}` : "",
+      ].filter(Boolean);
+      return fields.join("\n");
+    }
+    if ((name === "Agent" || name === "Task") && input.prompt != null)
+      return String(input.prompt);
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return activity.detail || "";
+  }
 }
 createRoot(document.getElementById("root")!).render(<App />);

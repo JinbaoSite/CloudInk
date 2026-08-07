@@ -16,7 +16,10 @@ import {
 } from "./auth.js";
 import {
   activitiesFromEvent,
+  completedAssistantTurn,
   detectClaudeModel,
+  questionsFromEvent,
+  responseMetricsFromEvent,
   runClaude,
   textFromEvent,
 } from "./claude.js";
@@ -352,7 +355,14 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   });
   let answer = "",
     stderr = "";
+  let committedAnswer = "";
   let buffer = "";
+  let questionAsked = false;
+  let responseMetrics: ReturnType<typeof responseMetricsFromEvent> = null;
+  const toolActivities = new Map<
+    string,
+    { messageId: string; activity: ReturnType<typeof activitiesFromEvent>[number] }
+  >();
   const sendEvent = (event: object) => {
     if (!res.destroyed && !res.writableEnded)
       res.write(JSON.stringify(event) + "\n");
@@ -363,23 +373,59 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
       const event = JSON.parse(line);
       if (event.type === "system" && event.model)
         sendEvent({ type: "model", model: String(event.model) });
+      responseMetrics = responseMetricsFromEvent(event) || responseMetrics;
+      const question = questionsFromEvent(event);
+      if (question) {
+        questionAsked = true;
+        sendEvent({ type: "question", question });
+      }
       const text = textFromEvent(event);
-      if (text) {
+      if (text && !questionAsked) {
         answer += text;
         sendEvent({ type: "delta", text });
       }
-      for (const activity of activitiesFromEvent(event)) {
+      const completedTurn = completedAssistantTurn(event);
+      if (completedTurn?.hasToolUse) {
+        // Partial stream events arrive before we know whether this assistant
+        // turn will call a tool. Retract that narration from the answer once
+        // the completed turn confirms it was execution progress.
+        answer = committedAnswer;
+        sendEvent({ type: "replace_answer", text: answer });
+      } else if (completedTurn) {
+        committedAnswer = answer;
+      }
+      for (const activity of activitiesFromEvent(event, cwd)) {
         const t = new Date().toISOString();
+        const previous = activity.toolUseId
+          ? toolActivities.get(activity.toolUseId)
+          : undefined;
+        if (activity.kind === "tool_result" && previous) {
+          const merged = {
+            ...previous.activity,
+            output: activity.detail || "",
+            isError: activity.isError,
+          };
+          db.prepare("UPDATE messages SET content=? WHERE id=?").run(
+            JSON.stringify(merged),
+            previous.messageId,
+          );
+          previous.activity = merged;
+          sendEvent({ type: "activity", activity: merged });
+          continue;
+        }
+        const messageId = crypto.randomUUID();
         db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
-          crypto.randomUUID(),
+          messageId,
           s.id,
           "activity",
           JSON.stringify(activity),
           t,
         );
+        if (activity.kind === "tool" && activity.toolUseId)
+          toolActivities.set(activity.toolUseId, { messageId, activity });
         sendEvent({ type: "activity", activity });
       }
-      if (event.type === "result" && !answer && event.result) {
+      if (event.type === "result" && !answer && !questionAsked && event.result) {
         answer = String(event.result);
         sendEvent({ type: "delta", text: answer });
       }
@@ -399,13 +445,24 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   child.on("close", (code) => {
     if (answer) {
       const t = new Date().toISOString();
+      const assistantMessageId = crypto.randomUUID();
       db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
-        crypto.randomUUID(),
+        assistantMessageId,
         s.id,
         "assistant",
         answer,
         t,
       );
+      if (responseMetrics) {
+        db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
+          crypto.randomUUID(),
+          s.id,
+          "metrics",
+          JSON.stringify({ messageId: assistantMessageId, ...responseMetrics }),
+          new Date(Date.now() + 1).toISOString(),
+        );
+        sendEvent({ type: "metrics", metrics: responseMetrics });
+      }
       db.prepare("UPDATE sessions SET updated_at=? WHERE id=?").run(t, s.id);
     }
     sendEvent(

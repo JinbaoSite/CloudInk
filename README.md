@@ -13,11 +13,16 @@
 - Markdown、GFM 和 MathJax 数学公式渲染
 - 中断会话支持通过“继续”恢复已保存的部分回答
 - 展示 Thinking、Read、Bash、工具输入及执行结果
+- 工具调用前的过程叙述会归入 Thinking，只有最终 `end_turn` 内容作为回答正文
+- Thinking 支持 Markdown；工具卡片展示描述及折叠的 `IN` / `OUT` 内容
+- Claude 需要用户确认时，在输入框上方展示 Submit answer 交互面板
+- 助手回答支持复制、重试，并展示耗时和 Token 消耗
 - 输入框底部展示 Claude CLI 实际使用的模型
 - `Auto`、`Plan`、`Manual`、`Edit automatically` 执行模式
 - `/` 命令与 Skills 选择面板
+- `@` 工作区文件选择和文件引用
 - 最多上传 10 个附件，单个文件最大 20 MB
-- 桌面端历史会话侧栏
+- 桌面端历史会话与文件目录侧栏，支持拖拽调整宽度
 - 手机端顶部导航和抽屉式历史会话
 - 空白新对话不会写入历史记录，首次发送内容时才创建会话
 
@@ -128,12 +133,16 @@ data/
 5. Thinking、工具调用、工具结果和最终回答都会持久化。
 6. 如果 CLI session 在回答中途断裂，发送“继续”时会从数据库补齐原始问题和最近有效回答，创建新的无工具 CLI session 继续生成。
 
+Claude 在一次 CLI 请求中可能产生多轮 assistant message：带 `tool_use` 的轮次属于执行过程，以 `end_turn` 结束的最后一轮才是正式回答。服务端会先实时转发文本；当完整事件确认该轮调用了工具时，通过 `replace_answer` 从正文撤回该轮文本，并将其作为 Thinking 活动保存。这样既保留流式反馈，也不会把 “Let me fix…” 等执行叙述混入最终答案。
+
 ## 流式交互行为
 
 - 用户发送消息时，消息区域立即定位到最新内容。
 - `delta`、Thinking 和工具事件到达时持续跟随底部。
 - 用户主动向上滚动时暂停自动跟随，回到底部附近后恢复。
 - 回答期间发送按钮切换为中止按钮；中止会关闭响应流和 Claude 子进程，并保留已经生成的部分文本。
+- 中止按钮使用持续旋转的状态动画表示 Claude 仍在运行。
+- 工具执行轮的临时文本会被重新归类为 Thinking；最终回答仍通过 `delta` 实时追加。
 - MathJax 在流式阶段不直接修改 React DOM，只在回答结束后统一排版公式。
 - Markdown 渲染异常时仅将对应消息回退为纯文本，不会让整个页面白屏。
 
@@ -145,6 +154,8 @@ data/
 | `POST`   | `/api/auth/login`            | 登录                   |
 | `POST`   | `/api/auth/logout`           | 退出登录               |
 | `GET`    | `/api/me`                    | 当前用户               |
+| `GET`    | `/api/config`                | 当前 Claude 模型配置   |
+| `GET`    | `/api/workspace/files`       | 当前用户的工作区文件   |
 | `GET`    | `/api/sessions`              | 当前用户的历史会话     |
 | `POST`   | `/api/sessions`              | 创建会话               |
 | `GET`    | `/api/sessions/:id/messages` | 获取会话消息           |
@@ -152,7 +163,17 @@ data/
 | `DELETE` | `/api/sessions/:id`          | 删除会话               |
 | `POST`   | `/api/files`                 | 上传附件               |
 
-消息接口返回 `application/x-ndjson`，事件类型包括 `delta`、`activity`、`model`、`done` 和 `error`。
+消息接口返回 `application/x-ndjson`，主要事件类型如下：
+
+| 事件             | 用途                                         |
+| ---------------- | -------------------------------------------- |
+| `delta`          | 追加当前候选回答文本                         |
+| `replace_answer` | 工具轮结束后撤回过程叙述，只保留已确认的正文 |
+| `activity`       | Thinking、工具调用和工具结果                 |
+| `question`       | Claude 请求用户提交结构化答案                |
+| `model`          | 当前 CLI 实际模型                            |
+| `metrics`        | 回答耗时及输入、输出、缓存 Token 统计        |
+| `done` / `error` | 流正常结束或异常结束                         |
 
 ## 常用命令
 
@@ -189,10 +210,12 @@ src/
 ├── activity.css         # Claude 执行过程样式
 └── markdown.css         # Markdown 内容样式
 server/
-├── index.ts             # API、上传、流式响应和中断会话恢复
+├── index.ts             # API、上传、流式分流、问题提交和中断会话恢复
 ├── auth.ts              # JWT Cookie 与鉴权中间件
 ├── db.ts                # SQLite schema、迁移和工作区初始化
-└── claude.ts            # Claude CLI 启动、模型探测和事件解析
+├── claude.ts            # Claude CLI 启动、模型探测和事件解析
+├── claude.test.ts       # 事件解析、工具轮分流和指标测试
+└── ui-mcp.mjs           # 非交互 CLI 向 Web UI 请求用户答案的 MCP 服务
 ```
 
 ## 验证
@@ -200,6 +223,7 @@ server/
 提交修改前至少运行：
 
 ```bash
+npm test
 npm run build
 ```
 
