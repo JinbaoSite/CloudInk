@@ -1,8 +1,48 @@
 .composer {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 11px 12px 9px;
+}
+
+.composer-drop-overlay {
+  position: absolute;
+  z-index: 30;
+  inset: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px dashed #aaa59c;
+  border-radius: 10px;
+  background: #faf9f6f2;
+  color: #5d5850;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+
+.composer-drop-overlay svg {
+  margin-bottom: 2px;
+  font-size: 21px;
+}
+
+.composer-drop-overlay b {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.composer-drop-overlay span {
+  color: #8b857c;
+  font-size: 10px;
+}
+
+.composer.dragging-files {
+  border-color: #aaa59c;
+  box-shadow:
+    0 0 0 3px #77716812,
+    0 8px 30px #29230f0c;
 }
 
 .submit-answer-panel {
@@ -103,7 +143,7 @@
   color: #969087;
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -175,8 +215,12 @@
   background: #fff;
 }
 
-.answer-radio { border-radius: 50%; }
-.answer-checkbox { border-radius: 3px; }
+.answer-radio {
+  border-radius: 50%;
+}
+.answer-checkbox {
+  border-radius: 3px;
+}
 .answer-radio i,
 .answer-checkbox i {
   width: 6px;
@@ -232,7 +276,7 @@
 
 .composer .answer-submit:disabled {
   cursor: default;
-  opacity: .38;
+  opacity: 0.38;
 }
 
 .composer-input-wrap {
@@ -633,7 +677,7 @@
   border-right-color: transparent;
   border-radius: 50%;
   background: transparent;
-  animation: stop-button-spin .72s linear infinite;
+  animation: stop-button-spin 0.72s linear infinite;
 }
 
 @keyframes stop-button-spin {

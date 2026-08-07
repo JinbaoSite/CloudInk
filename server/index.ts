@@ -8,6 +8,7 @@ import path from "node:path";
 import multer from "multer";
 import { z } from "zod";
 import { db, workspaceRoot } from "./db.js";
+import { descriptionForSlashItem, discoverSlashDescriptions } from "./slash.js";
 import {
   cookieOptions,
   requireAuth,
@@ -17,6 +18,7 @@ import {
 import {
   activitiesFromEvent,
   completedAssistantTurn,
+  detectClaudeCapabilities,
   detectClaudeModel,
   questionsFromEvent,
   responseMetricsFromEvent,
@@ -25,11 +27,44 @@ import {
 } from "./claude.js";
 const app = express();
 const detectedModel = detectClaudeModel(process.cwd());
+const slashCapabilityCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: Awaited<ReturnType<typeof detectClaudeCapabilities>>;
+  }
+>();
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
+const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
+function safeUploadFilename(originalName: string) {
+  const original = path.basename(originalName).slice(0, 180);
+  const extension = path.extname(original).replace(/[^.a-zA-Z0-9]/g, "");
+  const stem =
+    path
+      .basename(original, path.extname(original))
+      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .slice(0, 80) || "file";
+  return `${crypto.randomUUID()}-${stem}${extension}`;
+}
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024, files: 10 },
+  // Large uploads must be streamed to disk instead of being buffered in the
+  // Node.js heap. requireAuth runs before this middleware, so userId is set.
+  storage: multer.diskStorage({
+    destination: (req, _file, done) => {
+      const uid = (req as AuthedRequest).userId;
+      const user = db
+        .prepare("SELECT username FROM users WHERE id=?")
+        .get(uid) as { username: string } | undefined;
+      if (!user) return done(new Error("用户不存在"), "");
+      const uploadDir = path.join(workspaceRoot, user.username, "uploads");
+      fs.mkdirSync(uploadDir, { recursive: true });
+      done(null, uploadDir);
+    },
+    filename: (_req, file, done) =>
+      done(null, safeUploadFilename(file.originalname)),
+  }),
+  limits: { fileSize: MAX_UPLOAD_SIZE, files: 10 },
 });
 const credentials = z.object({
   email: z
@@ -99,11 +134,39 @@ app.get("/api/me", requireAuth, (req, res) => {
 app.get("/api/config", requireAuth, async (_req, res) =>
   res.json({ model: await detectedModel }),
 );
+app.get("/api/slash-items", requireAuth, async (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
+    { username: string } | undefined;
+  if (!user) return res.status(401).json({ error: "用户不存在" });
+  const workspace = path.join(workspaceRoot, user.username);
+  fs.mkdirSync(workspace, { recursive: true });
+  const cached = slashCapabilityCache.get(workspace);
+  const capabilities =
+    cached && cached.expiresAt > Date.now()
+      ? cached.value
+      : await detectClaudeCapabilities(workspace);
+  slashCapabilityCache.set(workspace, {
+    expiresAt: Date.now() + 10_000,
+    value: capabilities,
+  });
+  const skillNames = new Set(capabilities.skills);
+  const descriptions = discoverSlashDescriptions(workspace);
+  const item = (name: string, kind: "command" | "skill") => ({
+    name: `/${name}`,
+    description: descriptionForSlashItem(descriptions, name, kind),
+  });
+  res.json({
+    commands: capabilities.slashCommands
+      .filter((name) => !skillNames.has(name) && !name.startsWith("__"))
+      .map((name) => item(name, "command")),
+    skills: capabilities.skills.map((name) => item(name, "skill")),
+  });
+});
 app.get("/api/workspace/files", requireAuth, (req, res) => {
   const uid = (req as AuthedRequest).userId;
-  const user = db
-    .prepare("SELECT username FROM users WHERE id=?")
-    .get(uid) as { username: string } | undefined;
+  const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
+    { username: string } | undefined;
   if (!user) return res.status(401).json({ error: "用户不存在" });
 
   const workspace = path.join(workspaceRoot, user.username);
@@ -130,7 +193,10 @@ app.get("/api/workspace/files", requireAuth, (req, res) => {
       try {
         files.push({
           name: entry.name,
-          path: path.relative(workspace, absolutePath).split(path.sep).join("/"),
+          path: path
+            .relative(workspace, absolutePath)
+            .split(path.sep)
+            .join("/"),
           size: fs.statSync(absolutePath).size,
         });
       } catch {}
@@ -144,7 +210,7 @@ app.post("/api/files", requireAuth, (req, res) => {
     if (error) {
       const message =
         error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE"
-          ? "单个文件不能超过 20MB"
+          ? "单个文件不能超过 500MB"
           : "文件上传失败";
       return res.status(400).json({ error: message });
     }
@@ -157,23 +223,11 @@ app.post("/api/files", requireAuth, (req, res) => {
     if (files.length === 0)
       return res.status(400).json({ error: "请选择文件" });
 
-    const uploadDir = path.join(workspaceRoot, user.username, "uploads");
-    fs.mkdirSync(uploadDir, { recursive: true });
     const saved = files.map((file) => {
       const original = path.basename(file.originalname).slice(0, 180);
-      const extension = path.extname(original).replace(/[^.a-zA-Z0-9]/g, "");
-      const stem =
-        path
-          .basename(original, path.extname(original))
-          .replace(/[^a-zA-Z0-9._-]/g, "_")
-          .slice(0, 80) || "file";
-      const filename = `${crypto.randomUUID()}-${stem}${extension}`;
-      fs.writeFileSync(path.join(uploadDir, filename), file.buffer, {
-        flag: "wx",
-      });
       return {
         name: original,
-        path: `uploads/${filename}`,
+        path: `uploads/${file.filename}`,
         size: file.size,
       };
     });
@@ -361,7 +415,10 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   let responseMetrics: ReturnType<typeof responseMetricsFromEvent> = null;
   const toolActivities = new Map<
     string,
-    { messageId: string; activity: ReturnType<typeof activitiesFromEvent>[number] }
+    {
+      messageId: string;
+      activity: ReturnType<typeof activitiesFromEvent>[number];
+    }
   >();
   const sendEvent = (event: object) => {
     if (!res.destroyed && !res.writableEnded)
@@ -425,7 +482,12 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
           toolActivities.set(activity.toolUseId, { messageId, activity });
         sendEvent({ type: "activity", activity });
       }
-      if (event.type === "result" && !answer && !questionAsked && event.result) {
+      if (
+        event.type === "result" &&
+        !answer &&
+        !questionAsked &&
+        event.result
+      ) {
         answer = String(event.result);
         sendEvent({ type: "delta", text: answer });
       }

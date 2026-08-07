@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faBox,
   faCheck,
+  faBars,
   faComments,
   faCopy,
   faDatabase,
@@ -17,6 +18,7 @@ import {
   faFileZipper,
   faFolder,
   faFolderTree,
+  faCloudArrowUp,
   faGear,
   faKey,
   faListCheck,
@@ -25,7 +27,9 @@ import {
   faRotateRight,
   faSliders,
   faTerminal,
+  faTableColumns,
   faWandMagicSparkles,
+  faXmark,
   faHand,
 } from "@fortawesome/free-solid-svg-icons";
 import ReactMarkdown from "./MarkdownMessage";
@@ -74,6 +78,16 @@ type FileTreeNode = {
   directories: FileTreeNode[];
   files: WorkspaceFile[];
 };
+const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
+function sessionIdFromLocation() {
+  const match = window.location.pathname.match(/^\/sessions\/([^/]+)\/?$/);
+  if (!match) return "";
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return "";
+  }
+}
 const executionModes: Array<{
   value: ExecutionMode;
   icon: typeof faWandMagicSparkles;
@@ -119,6 +133,7 @@ const slashSkills = [
   { name: "/verify", description: "验证实现和完整业务流程" },
   { name: "/deep-research", description: "执行多步骤深度研究" },
 ];
+type SlashItem = { name: string; description: string };
 function localId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -146,7 +161,9 @@ function mergeActivityMessages(messages: Message[]) {
   for (const message of messages) {
     if (message.role === "metrics") continue;
     const hydratedMessage =
-      message.role === "assistant" && message.id && metricsByMessage.has(message.id)
+      message.role === "assistant" &&
+      message.id &&
+      metricsByMessage.has(message.id)
         ? { ...message, metrics: metricsByMessage.get(message.id) }
         : message;
     const activity = parseActivity(message);
@@ -273,7 +290,7 @@ function App() {
       { email: string; username: string } | null | undefined
     >(),
     [sessions, setSessions] = useState<Session[]>([]),
-    [active, setActive] = useState(""),
+    [active, setActive] = useState(sessionIdFromLocation),
     [messages, setMessages] = useState<Message[]>([]),
     [input, setInput] = useState(""),
     [mode, setMode] = useState<ExecutionMode>("auto"),
@@ -284,15 +301,29 @@ function App() {
     [workspaceFilesLoading, setWorkspaceFilesLoading] = useState(false),
     [showMentionMenu, setShowMentionMenu] = useState(false),
     [showSlashMenu, setShowSlashMenu] = useState(false),
+    [dynamicCommands, setDynamicCommands] =
+      useState<SlashItem[]>(slashCommands),
+    [dynamicSkills, setDynamicSkills] = useState<SlashItem[]>(slashSkills),
+    [slashItemsLoading, setSlashItemsLoading] = useState(false),
     [showModeMenu, setShowModeMenu] = useState(false),
     [sidebarView, setSidebarView] = useState<"sessions" | "files">("sessions"),
     [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth),
-    [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null),
-    [questionAnswers, setQuestionAnswers] = useState<Record<number, string[]>>({}),
-    [customQuestionAnswers, setCustomQuestionAnswers] = useState<Record<number, string>>({}),
+    [sidebarCollapsed, setSidebarCollapsed] = useState(
+      () => localStorage.getItem("claude-ui-sidebar-collapsed") === "true",
+    ),
+    [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(
+      null,
+    ),
+    [questionAnswers, setQuestionAnswers] = useState<Record<number, string[]>>(
+      {},
+    ),
+    [customQuestionAnswers, setCustomQuestionAnswers] = useState<
+      Record<number, string>
+    >({}),
     [copiedMessageId, setCopiedMessageId] = useState(""),
     [mobileSessionsOpen, setMobileSessionsOpen] = useState(false),
     [uploading, setUploading] = useState(false),
+    [draggingFiles, setDraggingFiles] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -308,6 +339,7 @@ function App() {
   const skipMessageLoadForRef = useRef("");
   const responseAbortRef = useRef<AbortController | null>(null);
   const resizingSidebarRef = useRef(false);
+  const fileDragDepthRef = useRef(0);
   const slashMatch = input.match(/(?:^|\s)(\/[^\s]*)$/);
   const slashQuery = slashMatch?.[1].toLowerCase() || "";
   const mentionMatch = input.match(/(?:^|\s)@([^\s@]*)$/);
@@ -315,15 +347,36 @@ function App() {
   const filteredWorkspaceFiles = workspaceFiles
     .filter((file) => file.path.toLowerCase().includes(mentionQuery))
     .slice(0, 12);
-  const filteredCommands = slashCommands.filter((command) =>
+  const filteredCommands = dynamicCommands.filter((command) =>
     command.name.startsWith(slashQuery),
   );
-  const filteredSkills = slashSkills.filter((skill) =>
+  const filteredSkills = dynamicSkills.filter((skill) =>
     skill.name.startsWith(slashQuery),
   );
   const activeMode =
     executionModes.find((option) => option.value === mode) || executionModes[0];
   const load = () => api("/sessions").then(setSessions);
+  async function refreshSlashItems() {
+    if (slashItemsLoading) return;
+    setSlashItemsLoading(true);
+    try {
+      const result = (await api("/slash-items")) as {
+        commands: SlashItem[];
+        skills: SlashItem[];
+      };
+      setDynamicCommands(result.commands);
+      setDynamicSkills(result.skills);
+    } catch (loadError) {
+      setError((loadError as Error).message);
+    } finally {
+      setSlashItemsLoading(false);
+    }
+  }
+  function navigateToSession(id: string, replace = false) {
+    const url = id ? `/sessions/${encodeURIComponent(id)}` : "/";
+    window.history[replace ? "replaceState" : "pushState"](null, "", url);
+    setActive(id);
+  }
   useEffect(() => {
     api("/me")
       .then((user) => {
@@ -338,6 +391,21 @@ function App() {
   useEffect(() => {
     localStorage.setItem("claude-ui-sidebar-width", String(sidebarWidth));
   }, [sidebarWidth]);
+  useEffect(() => {
+    const restoreSessionFromUrl = () => {
+      autoScrollRef.current = true;
+      setActive(sessionIdFromLocation());
+      setMobileSessionsOpen(false);
+    };
+    window.addEventListener("popstate", restoreSessionFromUrl);
+    return () => window.removeEventListener("popstate", restoreSessionFromUrl);
+  }, []);
+  useEffect(() => {
+    localStorage.setItem(
+      "claude-ui-sidebar-collapsed",
+      String(sidebarCollapsed),
+    );
+  }, [sidebarCollapsed]);
   useEffect(() => {
     if (!showModeMenu) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -396,9 +464,16 @@ function App() {
       return;
     }
     let cancelled = false;
-    api(`/sessions/${active}/messages`).then((items: Message[]) => {
-      if (!cancelled) setMessages(mergeActivityMessages(items));
-    });
+    api(`/sessions/${active}/messages`)
+      .then((items: Message[]) => {
+        if (!cancelled) setMessages(mergeActivityMessages(items));
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        setError((loadError as Error).message);
+        setMessages([]);
+        navigateToSession("", true);
+      });
     return () => {
       cancelled = true;
     };
@@ -428,7 +503,7 @@ function App() {
   function create() {
     if (busy) return;
     autoScrollRef.current = true;
-    setActive("");
+    navigateToSession("");
     setMessages([]);
     setInput("");
     setAttachments([]);
@@ -441,15 +516,23 @@ function App() {
     setMobileSessionsOpen(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
-  async function uploadFiles(files: FileList | null) {
-    if (!files?.length) return;
+  async function uploadFiles(files: FileList | File[] | null) {
+    if (!files?.length || uploading) return;
+    const selected = Array.from(files).slice(0, 10 - attachments.length);
+    if (!selected.length) {
+      setError("每条消息最多添加 10 个附件");
+      return;
+    }
+    const oversized = selected.find((file) => file.size > MAX_UPLOAD_SIZE);
+    if (oversized) {
+      setError(`${oversized.name} 超过 500MB，无法上传`);
+      return;
+    }
     setUploading(true);
     setError("");
     try {
       const form = new FormData();
-      Array.from(files)
-        .slice(0, 10 - attachments.length)
-        .forEach((file) => form.append("files", file));
+      selected.forEach((file) => form.append("files", file));
       const response = await fetch("/api/files", {
         method: "POST",
         body: form,
@@ -474,6 +557,28 @@ function App() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
+  function containsDraggedFiles(event: React.DragEvent) {
+    return Array.from(event.dataTransfer.types).includes("Files");
+  }
+  function onComposerDragEnter(event: React.DragEvent<HTMLFormElement>) {
+    if (!containsDraggedFiles(event) || busy || uploading) return;
+    event.preventDefault();
+    fileDragDepthRef.current += 1;
+    setDraggingFiles(true);
+  }
+  function onComposerDragLeave(event: React.DragEvent<HTMLFormElement>) {
+    if (!containsDraggedFiles(event)) return;
+    event.preventDefault();
+    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+    if (fileDragDepthRef.current === 0) setDraggingFiles(false);
+  }
+  function onComposerDrop(event: React.DragEvent<HTMLFormElement>) {
+    if (!containsDraggedFiles(event)) return;
+    event.preventDefault();
+    fileDragDepthRef.current = 0;
+    setDraggingFiles(false);
+    if (!busy && !uploading) void uploadFiles(event.dataTransfer.files);
+  }
   function focusComposerAt(position?: number) {
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
@@ -485,7 +590,8 @@ function App() {
   }
   async function copyResponse(content: string, messageId: string) {
     try {
-      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(content);
+      if (navigator.clipboard?.writeText)
+        await navigator.clipboard.writeText(content);
       else {
         const copyTarget = document.createElement("textarea");
         copyTarget.value = content;
@@ -498,7 +604,10 @@ function App() {
       }
       setCopiedMessageId(messageId);
       window.setTimeout(
-        () => setCopiedMessageId((current) => (current === messageId ? "" : current)),
+        () =>
+          setCopiedMessageId((current) =>
+            current === messageId ? "" : current,
+          ),
         1600,
       );
     } catch {
@@ -550,7 +659,9 @@ function App() {
     void loadWorkspaceFiles();
   }
   function insertFileMention(file: WorkspaceFile) {
-    const mention = file.path.includes(" ") ? `@"${file.path}"` : `@${file.path}`;
+    const mention = file.path.includes(" ")
+      ? `@"${file.path}"`
+      : `@${file.path}`;
     let cursorPosition: number | undefined;
     setInput((current) => {
       const next = /(^|\s)@[^\s@]*$/.test(current)
@@ -570,7 +681,7 @@ function App() {
       const s = await api("/sessions", { method: "POST" });
       id = s.id;
       skipMessageLoadForRef.current = id;
-      setActive(id);
+      navigateToSession(id);
     }
     const text = input;
     const sentAttachments = attachments;
@@ -749,7 +860,7 @@ function App() {
     : null;
   return (
     <div
-      className="shell"
+      className={`shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
       style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
       {mobileSessionsOpen && (
@@ -765,11 +876,20 @@ function App() {
           <div className="brand">✦ Claude Code</div>
           <button
             type="button"
+            className="sidebar-collapse"
+            title="收起侧边栏"
+            aria-label="收起侧边栏"
+            onClick={() => setSidebarCollapsed(true)}
+          >
+            <FontAwesomeIcon icon={faTableColumns} />
+          </button>
+          <button
+            type="button"
             className="sidebar-close"
             aria-label="关闭历史会话"
             onClick={() => setMobileSessionsOpen(false)}
           >
-            ×
+            <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
         <button className="new" onClick={create}>
@@ -804,20 +924,26 @@ function App() {
               <div
                 className={"session " + (s.id === active ? "active" : "")}
                 key={s.id}
-                onClick={() => {
-                  autoScrollRef.current = true;
-                  setActive(s.id);
-                  setMobileSessionsOpen(false);
-                }}
               >
-                <span>{s.title}</span>
+                <a
+                  className="session-link"
+                  href={`/sessions/${encodeURIComponent(s.id)}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    autoScrollRef.current = true;
+                    navigateToSession(s.id);
+                    setMobileSessionsOpen(false);
+                  }}
+                >
+                  {s.title}
+                </a>
                 <button
                   aria-label={`删除 ${s.title}`}
                   onClick={async (e) => {
                     e.stopPropagation();
                     await api("/sessions/" + s.id, { method: "DELETE" });
                     if (active === s.id) {
-                      setActive("");
+                      navigateToSession("", true);
                       setMessages([]);
                     }
                     load();
@@ -859,6 +985,7 @@ function App() {
           <button
             onClick={async () => {
               await api("/auth/logout", { method: "POST" });
+              window.history.replaceState(null, "", "/");
               location.reload();
             }}
           >
@@ -866,53 +993,58 @@ function App() {
           </button>
         </footer>
       </aside>
-      <div
-        className="sidebar-resizer"
-        role="separator"
-        aria-label="调整侧边栏宽度"
-        aria-orientation="vertical"
-        aria-valuemin={220}
-        aria-valuemax={520}
-        aria-valuenow={sidebarWidth}
-        tabIndex={0}
-        onDoubleClick={() => {
-          setSidebarWidth(280);
-          localStorage.setItem("claude-ui-sidebar-width", "280");
-        }}
-        onPointerDown={(event) => {
-          resizingSidebarRef.current = true;
-          event.currentTarget.setPointerCapture(event.pointerId);
-          document.body.classList.add("resizing-sidebar");
-        }}
-        onPointerMove={(event) => {
-          if (!resizingSidebarRef.current) return;
-          const maximum = Math.min(520, window.innerWidth - 420);
-          setSidebarWidth(Math.max(220, Math.min(maximum, event.clientX)));
-        }}
-        onPointerUp={(event) => {
-          if (!resizingSidebarRef.current) return;
-          resizingSidebarRef.current = false;
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          document.body.classList.remove("resizing-sidebar");
-        }}
-        onPointerCancel={() => {
-          resizingSidebarRef.current = false;
-          document.body.classList.remove("resizing-sidebar");
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-          event.preventDefault();
-          const step = event.shiftKey ? 40 : 10;
-          const direction = event.key === "ArrowLeft" ? -1 : 1;
-          setSidebarWidth((current) => {
-            const next = Math.max(220, Math.min(520, current + direction * step));
-            localStorage.setItem("claude-ui-sidebar-width", String(next));
-            return next;
-          });
-        }}
-      >
-        <span />
-      </div>
+      {!sidebarCollapsed && (
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-label="调整侧边栏宽度"
+          aria-orientation="vertical"
+          aria-valuemin={220}
+          aria-valuemax={520}
+          aria-valuenow={sidebarWidth}
+          tabIndex={0}
+          onDoubleClick={() => {
+            setSidebarWidth(280);
+            localStorage.setItem("claude-ui-sidebar-width", "280");
+          }}
+          onPointerDown={(event) => {
+            resizingSidebarRef.current = true;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            document.body.classList.add("resizing-sidebar");
+          }}
+          onPointerMove={(event) => {
+            if (!resizingSidebarRef.current) return;
+            const maximum = Math.min(520, window.innerWidth - 420);
+            setSidebarWidth(Math.max(220, Math.min(maximum, event.clientX)));
+          }}
+          onPointerUp={(event) => {
+            if (!resizingSidebarRef.current) return;
+            resizingSidebarRef.current = false;
+            event.currentTarget.releasePointerCapture(event.pointerId);
+            document.body.classList.remove("resizing-sidebar");
+          }}
+          onPointerCancel={() => {
+            resizingSidebarRef.current = false;
+            document.body.classList.remove("resizing-sidebar");
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            const step = event.shiftKey ? 40 : 10;
+            const direction = event.key === "ArrowLeft" ? -1 : 1;
+            setSidebarWidth((current) => {
+              const next = Math.max(
+                220,
+                Math.min(520, current + direction * step),
+              );
+              localStorage.setItem("claude-ui-sidebar-width", String(next));
+              return next;
+            });
+          }}
+        >
+          <span />
+        </div>
+      )}
       <section className="chat">
         <header>
           <button
@@ -922,8 +1054,19 @@ function App() {
             aria-expanded={mobileSessionsOpen}
             onClick={() => setMobileSessionsOpen(true)}
           >
-            ☰
+            <FontAwesomeIcon icon={faBars} />
           </button>
+          {sidebarCollapsed && (
+            <button
+              type="button"
+              className="desktop-sidebar-open"
+              title="展开侧边栏"
+              aria-label="展开侧边栏"
+              onClick={() => setSidebarCollapsed(false)}
+            >
+              <FontAwesomeIcon icon={faTableColumns} />
+            </button>
+          )}
           <div className="chat-heading">
             {sessions.find((s) => s.id === active)?.title || "新对话"}
             <small>工作区与会话均按用户隔离</small>
@@ -999,15 +1142,21 @@ function App() {
                     m.content &&
                     !streamingThisMessage && (
                       <div className="response-actions" aria-label="回复操作">
-                        {m.metrics && <ResponseMetricsLabel metrics={m.metrics} />}
+                        {m.metrics && (
+                          <ResponseMetricsLabel metrics={m.metrics} />
+                        )}
                         <button
                           type="button"
                           title="复制回复"
                           aria-label="复制回复"
-                          onClick={() => void copyResponse(m.content, messageKey)}
+                          onClick={() =>
+                            void copyResponse(m.content, messageKey)
+                          }
                         >
                           <FontAwesomeIcon
-                            icon={copiedMessageId === messageKey ? faCheck : faCopy}
+                            icon={
+                              copiedMessageId === messageKey ? faCheck : faCopy
+                            }
                           />
                           <span>
                             {copiedMessageId === messageKey ? "已复制" : "复制"}
@@ -1030,7 +1179,11 @@ function App() {
             );
           })}
           {conversationPhase && (
-            <div className="conversation-live-status" role="status" aria-live="polite">
+            <div
+              className="conversation-live-status"
+              role="status"
+              aria-live="polite"
+            >
               <span className="live-status-spinner" aria-hidden="true" />
               <strong>{conversationPhase.label}</strong>
               <span className="live-status-dots" aria-hidden="true">
@@ -1043,7 +1196,26 @@ function App() {
           )}
           {error && <div className="error">{error}</div>}
         </div>
-        <form className="composer" ref={composerFormRef} onSubmit={send}>
+        <form
+          className={`composer${draggingFiles ? " dragging-files" : ""}`}
+          ref={composerFormRef}
+          onSubmit={send}
+          onDragEnter={onComposerDragEnter}
+          onDragOver={(event) => {
+            if (!containsDraggedFiles(event) || busy || uploading) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+          }}
+          onDragLeave={onComposerDragLeave}
+          onDrop={onComposerDrop}
+        >
+          {draggingFiles && (
+            <div className="composer-drop-overlay" aria-hidden="true">
+              <FontAwesomeIcon icon={faCloudArrowUp} />
+              <b>松开以上传</b>
+              <span>支持文件和图片，单个最大 500MB</span>
+            </div>
+          )}
           {pendingQuestion && (
             <SubmitAnswerPanel
               pending={pendingQuestion}
@@ -1075,7 +1247,10 @@ function App() {
                   .map((question, index) => {
                     const selections = questionAnswers[index] || [];
                     const custom = customQuestionAnswers[index]?.trim();
-                    const answer = [...selections, ...(custom ? [custom] : [])].join(", ");
+                    const answer = [
+                      ...selections,
+                      ...(custom ? [custom] : []),
+                    ].join(", ");
                     return `${question.question}\n${answer}`;
                   })
                   .join("\n\n");
@@ -1083,7 +1258,9 @@ function App() {
                 setQuestionAnswers({});
                 setCustomQuestionAnswers({});
                 setInput(response);
-                requestAnimationFrame(() => composerFormRef.current?.requestSubmit());
+                requestAnimationFrame(() =>
+                  composerFormRef.current?.requestSubmit(),
+                );
               }}
             />
           )}
@@ -1153,7 +1330,11 @@ function App() {
                 </button>
               ))}
               {!filteredCommands.length && !filteredSkills.length && (
-                <div className="slash-empty">没有匹配项</div>
+                <div className="slash-empty">
+                  {slashItemsLoading
+                    ? "正在扫描 Commands 和 Skills…"
+                    : "没有匹配项"}
+                </div>
               )}
               <button
                 type="button"
@@ -1191,7 +1372,9 @@ function App() {
                 ))
               ) : (
                 <div className="mention-empty">
-                  {workspaceFilesLoaded ? "没有匹配的文件" : "无法读取工作区文件"}
+                  {workspaceFilesLoaded
+                    ? "没有匹配的文件"
+                    : "无法读取工作区文件"}
                 </div>
               )}
             </div>
@@ -1209,8 +1392,10 @@ function App() {
               value={input}
               onScroll={(event) => {
                 if (!inputHighlightRef.current) return;
-                inputHighlightRef.current.scrollTop = event.currentTarget.scrollTop;
-                inputHighlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
+                inputHighlightRef.current.scrollTop =
+                  event.currentTarget.scrollTop;
+                inputHighlightRef.current.scrollLeft =
+                  event.currentTarget.scrollLeft;
               }}
               onChange={(e) => {
                 const value = e.target.value;
@@ -1220,6 +1405,7 @@ function App() {
                 setShowSlashMenu(hasSlash);
                 setShowMentionMenu(hasMention);
                 if (hasMention) void loadWorkspaceFiles();
+                if (hasSlash) void refreshSlashItems();
                 if (hasSlash || hasMention) setShowModeMenu(false);
                 if (hasSlash) setShowMentionMenu(false);
                 if (hasMention) setShowSlashMenu(false);
@@ -1231,10 +1417,28 @@ function App() {
                   setShowMentionMenu(false);
                   return;
                 }
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && (e.shiftKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  const start = e.currentTarget.selectionStart;
+                  const end = e.currentTarget.selectionEnd;
+                  const next = `${input.slice(0, start)}\n${input.slice(end)}`;
+                  setInput(next);
+                  requestAnimationFrame(() => {
+                    const cursor = start + 1;
+                    textareaRef.current?.setSelectionRange(cursor, cursor);
+                  });
+                  return;
+                }
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   e.currentTarget.form?.requestSubmit();
                 }
+              }}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData.files);
+                if (!files.length || busy || uploading) return;
+                event.preventDefault();
+                void uploadFiles(files);
               }}
               placeholder="给 Claude 发消息…"
             />
@@ -1296,6 +1500,7 @@ function App() {
                         `${current}${current && !current.endsWith(" ") ? " " : ""}/`,
                     );
                   setShowSlashMenu(true);
+                  void refreshSlashItems();
                   setShowModeMenu(false);
                   requestAnimationFrame(() => textareaRef.current?.focus());
                 }}
@@ -1371,7 +1576,11 @@ function SubmitAnswerPanel({
   answers: Record<number, string[]>;
   customAnswers: Record<number, string>;
   busy: boolean;
-  onToggle: (questionIndex: number, label: string, multiSelect: boolean) => void;
+  onToggle: (
+    questionIndex: number,
+    label: string,
+    multiSelect: boolean,
+  ) => void;
   onCustomAnswer: (questionIndex: number, value: string) => void;
   onDismiss: () => void;
   onSubmit: () => void;
@@ -1387,7 +1596,12 @@ function SubmitAnswerPanel({
           <span className="answer-status-dot" aria-hidden="true" />
           <b>Claude needs your input</b>
         </div>
-        <button type="button" className="answer-dismiss" onClick={onDismiss} aria-label="关闭">
+        <button
+          type="button"
+          className="answer-dismiss"
+          onClick={onDismiss}
+          aria-label="关闭"
+        >
           ×
         </button>
       </header>
@@ -1401,7 +1615,8 @@ function SubmitAnswerPanel({
             {question.options?.length ? (
               <div className="answer-options">
                 {question.options.map((option) => {
-                  const selected = answers[questionIndex]?.includes(option.label) || false;
+                  const selected =
+                    answers[questionIndex]?.includes(option.label) || false;
                   return (
                     <button
                       type="button"
@@ -1409,15 +1624,27 @@ function SubmitAnswerPanel({
                       aria-pressed={selected}
                       key={option.label}
                       onClick={() =>
-                        onToggle(questionIndex, option.label, Boolean(question.multiSelect))
+                        onToggle(
+                          questionIndex,
+                          option.label,
+                          Boolean(question.multiSelect),
+                        )
                       }
                     >
-                      <span className={question.multiSelect ? "answer-checkbox" : "answer-radio"}>
+                      <span
+                        className={
+                          question.multiSelect
+                            ? "answer-checkbox"
+                            : "answer-radio"
+                        }
+                      >
                         {selected && <i />}
                       </span>
                       <span>
                         <b>{option.label}</b>
-                        {option.description && <small>{option.description}</small>}
+                        {option.description && (
+                          <small>{option.description}</small>
+                        )}
                       </span>
                     </button>
                   );
@@ -1427,15 +1654,28 @@ function SubmitAnswerPanel({
             <input
               type="text"
               value={customAnswers[questionIndex] || ""}
-              onChange={(event) => onCustomAnswer(questionIndex, event.target.value)}
-              placeholder={question.options?.length ? "Other answer (optional)" : "Type your answer…"}
+              onChange={(event) =>
+                onCustomAnswer(questionIndex, event.target.value)
+              }
+              placeholder={
+                question.options?.length
+                  ? "Other answer (optional)"
+                  : "Type your answer…"
+              }
             />
           </fieldset>
         ))}
       </div>
       <footer>
-        <span>{busy ? "等待 Claude 完成当前步骤…" : "提交后将继续当前会话"}</span>
-        <button type="button" className="answer-submit" disabled={busy || !complete} onClick={onSubmit}>
+        <span>
+          {busy ? "等待 Claude 完成当前步骤…" : "提交后将继续当前会话"}
+        </span>
+        <button
+          type="button"
+          className="answer-submit"
+          disabled={busy || !complete}
+          onClick={onSubmit}
+        >
           Submit answer
         </button>
       </footer>
@@ -1501,7 +1741,12 @@ function HighlightedComposerInput({ value }: { value: string }) {
     cursor = tokenStart + match[2].length;
   }
   if (cursor < value.length) parts.push(value.slice(cursor));
-  return <>{parts}{value.endsWith("\n") ? "\u200b" : null}</>;
+  return (
+    <>
+      {parts}
+      {value.endsWith("\n") ? "\u200b" : null}
+    </>
+  );
 }
 
 function buildFileTree(files: WorkspaceFile[]): FileTreeNode {
@@ -1578,45 +1823,47 @@ function fileTypeIcon(filename: string) {
   const lower = filename.toLowerCase();
   const extension = lower.includes(".") ? lower.split(".").pop() || "" : "";
   if (["ts", "tsx"].includes(extension)) return faFileCode;
-  if (["js", "jsx", "mjs", "cjs"].includes(extension))
-    return faFileCode;
+  if (["js", "jsx", "mjs", "cjs"].includes(extension)) return faFileCode;
   if (extension === "py") return faFileCode;
-  if (["html", "htm", "vue", "svelte"].includes(extension))
-    return faFileCode;
-  if (["css", "scss", "sass", "less"].includes(extension))
-    return faPalette;
-  if (["md", "mdx", "markdown"].includes(extension))
-    return faFileLines;
+  if (["html", "htm", "vue", "svelte"].includes(extension)) return faFileCode;
+  if (["css", "scss", "sass", "less"].includes(extension)) return faPalette;
+  if (["md", "mdx", "markdown"].includes(extension)) return faFileLines;
   if (["json", "jsonc", "yaml", "yml", "toml", "xml"].includes(extension))
     return faSliders;
-  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp"].includes(extension))
+  if (
+    ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp"].includes(
+      extension,
+    )
+  )
     return faFileImage;
   if (extension === "pdf") return faFilePdf;
   if (["doc", "docx", "odt", "rtf", "txt"].includes(extension))
     return faFileLines;
-  if (["csv", "xls", "xlsx", "parquet"].includes(extension))
-    return faFileExcel;
+  if (["csv", "xls", "xlsx", "parquet"].includes(extension)) return faFileExcel;
   if (["zip", "tar", "gz", "tgz", "rar", "7z"].includes(extension))
     return faFileZipper;
   if (["sh", "bash", "zsh", "fish", "ps1"].includes(extension))
     return faTerminal;
-  if (["sql", "db", "sqlite", "sqlite3"].includes(extension))
-    return faDatabase;
-  if (["mp3", "wav", "ogg", "m4a", "flac", "mp4", "mov", "webm"].includes(extension))
+  if (["sql", "db", "sqlite", "sqlite3"].includes(extension)) return faDatabase;
+  if (
+    ["mp3", "wav", "ogg", "m4a", "flac", "mp4", "mov", "webm"].includes(
+      extension,
+    )
+  )
     return faFileVideo;
-  if (lower === "dockerfile" || lower.startsWith("dockerfile."))
-    return faBox;
-  if (lower === "makefile" || lower === "justfile")
-    return faGear;
-  if (lower === ".env" || lower.startsWith(".env."))
-    return faKey;
+  if (lower === "dockerfile" || lower.startsWith("dockerfile.")) return faBox;
+  if (lower === "makefile" || lower === "justfile") return faGear;
+  if (lower === ".env" || lower.startsWith(".env.")) return faKey;
   return faFile;
 }
 
 function WorkspaceFileRow({ file }: { file: WorkspaceFile }) {
   const iconType = fileTypeIcon(file.name);
   return (
-    <div className="workspace-file" title={`${file.path} · ${formatFileSize(file.size)}`}>
+    <div
+      className="workspace-file"
+      title={`${file.path} · ${formatFileSize(file.size)}`}
+    >
       <span className="workspace-file-icon" aria-hidden="true">
         <FontAwesomeIcon icon={iconType} />
       </span>
@@ -1643,9 +1890,9 @@ function ActivityCard({
           ? "×"
           : activity.kind === "tool" && activity.output != null
             ? "✓"
-          : activity.kind === "tool_result"
-            ? "✓"
-            : "⌘";
+            : activity.kind === "tool_result"
+              ? "✓"
+              : "⌘";
   return (
     <details
       className={`activity-card ${activity.kind} ${activity.isError ? "failed" : ""} ${inProgress ? "in-progress" : ""}`}
@@ -1704,23 +1951,32 @@ function ActivityDetail({ activity }: { activity: Activity }) {
 function activityDisplayLabel(activity: Activity) {
   if (activity.kind !== "tool") return activity.label;
   try {
-    const input = JSON.parse(activity.detail || "{}") as Record<string, unknown>;
+    const input = JSON.parse(activity.detail || "{}") as Record<
+      string,
+      unknown
+    >;
     const name = activity.toolName || activity.label;
     const compact = (value: unknown) => {
-      const text = String(value || "").replace(/\s+/g, " ").trim();
+      const text = String(value || "")
+        .replace(/\s+/g, " ")
+        .trim();
       return text.length > 140 ? `${text.slice(0, 139)}…` : text;
     };
     const withValue = (label: string, value: unknown) => {
       const text = compact(value);
       return text ? `${label} ${text}` : label;
     };
-    if (name === "Read") return withValue("Read", input.file_path || input.path);
+    if (name === "Read")
+      return withValue("Read", input.file_path || input.path);
     if (["Write", "Edit", "MultiEdit"].includes(name))
       return withValue(name, input.file_path || input.path);
     if (name === "Bash")
       return withValue("Bash", input.description || input.command);
     if (name === "Agent" || name === "Task")
-      return withValue("Agent", input.description || input.subagent_type || input.prompt);
+      return withValue(
+        "Agent",
+        input.description || input.subagent_type || input.prompt,
+      );
     if (name === "Glob" || name === "Grep")
       return withValue(name, input.pattern);
     if (name === "WebFetch") return withValue(name, input.url);
@@ -1753,7 +2009,10 @@ function activityDisplayTitle(activity: Activity) {
 
 function formatActivityInput(activity: Activity) {
   try {
-    const input = JSON.parse(activity.detail || "{}") as Record<string, unknown>;
+    const input = JSON.parse(activity.detail || "{}") as Record<
+      string,
+      unknown
+    >;
     const name = activity.toolName || activity.label.split(" ")[0];
     if (name === "Bash" && input.command != null) return String(input.command);
     if (name === "Read") {

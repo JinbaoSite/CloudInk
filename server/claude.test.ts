@@ -2,10 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   activitiesFromEvent,
+  capabilitiesFromEvent,
   completedAssistantTurn,
   questionsFromEvent,
   responseMetricsFromEvent,
 } from "./claude.js";
+
+test("extracts dynamically discovered slash commands and skills", () => {
+  assert.deepEqual(
+    capabilitiesFromEvent({
+      type: "system",
+      subtype: "init",
+      slash_commands: ["compact", "loop", "dataviz"],
+      skills: ["loop", "dataviz"],
+    }),
+    {
+      slashCommands: ["compact", "loop", "dataviz"],
+      skills: ["loop", "dataviz"],
+    },
+  );
+});
 
 test("classifies text in a tool-use turn as execution progress", () => {
   const event = {
@@ -13,7 +29,12 @@ test("classifies text in a tool-use turn as execution progress", () => {
     message: {
       content: [
         { type: "text", text: "Let me fix that." },
-        { type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "a.md" } },
+        {
+          type: "tool_use",
+          id: "edit-1",
+          name: "Edit",
+          input: { file_path: "a.md" },
+        },
       ],
     },
   };
@@ -128,7 +149,10 @@ test("adds useful context to Read and Bash activity labels", () => {
             type: "tool_use",
             id: "bash-1",
             name: "Bash",
-            input: { command: "ls -la", description: "List working directory contents" },
+            input: {
+              command: "ls -la",
+              description: "List working directory contents",
+            },
           },
         ],
       },

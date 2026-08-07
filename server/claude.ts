@@ -66,6 +66,10 @@ export function detectClaudeModel(cwd: string, timeoutMs = 30_000) {
 }
 
 export type ClaudeEvent = { type: string; [key: string]: unknown };
+export type ClaudeCapabilities = {
+  slashCommands: string[];
+  skills: string[];
+};
 export type ClaudeActivity = {
   kind: "status" | "thinking" | "tool" | "tool_result";
   label: string;
@@ -76,8 +80,71 @@ export type ClaudeActivity = {
   output?: string;
 };
 
+export function capabilitiesFromEvent(
+  event: ClaudeEvent,
+): ClaudeCapabilities | null {
+  if (event.type !== "system" || event.subtype !== "init") return null;
+  const strings = (value: unknown) =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  return {
+    slashCommands: strings(event.slash_commands),
+    skills: strings(event.skills),
+  };
+}
+
+export function detectClaudeCapabilities(cwd: string, timeoutMs = 10_000) {
+  return new Promise<ClaudeCapabilities>((resolve) => {
+    const child = spawn(
+      process.env.CLAUDE_CLI_PATH || "claude",
+      [
+        "-p",
+        "Reply with OK.",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--tools",
+        "",
+      ],
+      { cwd, env: process.env, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let buffer = "";
+    let settled = false;
+    const finish = (
+      capabilities: ClaudeCapabilities = { slashCommands: [], skills: [] },
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(capabilities);
+      child.kill("SIGTERM");
+    };
+    const inspectLine = (line: string) => {
+      if (!line.trim() || settled) return;
+      try {
+        const capabilities = capabilitiesFromEvent(JSON.parse(line));
+        if (capabilities) finish(capabilities);
+      } catch {}
+    };
+    const timer = setTimeout(() => finish(), timeoutMs);
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) inspectLine(line);
+    });
+    child.stdout.on("end", () => inspectLine(buffer));
+    child.on("error", () => finish());
+    child.on("close", () => finish());
+  });
+}
+
 function shortValue(value: unknown, maxLength = 140) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
@@ -88,7 +155,10 @@ function toolActivityLabel(
 ) {
   const filePath = input.file_path || input.path;
   const resolvedPath =
-    cwd && typeof filePath === "string" && filePath && !path.isAbsolute(filePath)
+    cwd &&
+    typeof filePath === "string" &&
+    filePath &&
+    !path.isAbsolute(filePath)
       ? path.resolve(cwd, filePath)
       : filePath;
   const suffix = (value: unknown) => {
@@ -194,7 +264,9 @@ export function completedAssistantTurn(event: ClaudeEvent) {
   const content = message?.content || [];
   return {
     text: content
-      .filter((block) => block.type === "text" && typeof block.text === "string")
+      .filter(
+        (block) => block.type === "text" && typeof block.text === "string",
+      )
       .map((block) => String(block.text))
       .join(""),
     hasToolUse: content.some((block) => block.type === "tool_use"),
@@ -238,7 +310,8 @@ export function questionsFromEvent(event: ClaudeEvent) {
   const rawQuestions = Array.isArray(input?.questions)
     ? input.questions
     : Object.entries(input || {}).find(
-        ([key, value]) => key.toLowerCase().includes("questions") && Array.isArray(value),
+        ([key, value]) =>
+          key.toLowerCase().includes("questions") && Array.isArray(value),
       )?.[1];
   if (!Array.isArray(rawQuestions)) return null;
   const questions = rawQuestions.flatMap<ClaudeQuestion>((value) => {
@@ -246,23 +319,31 @@ export function questionsFromEvent(event: ClaudeEvent) {
     const item = value as Record<string, unknown>;
     if (typeof item.question !== "string" || !item.question.trim()) return [];
     const options = Array.isArray(item.options)
-      ? item.options.flatMap<{ label: string; description?: string }>((option) => {
-          if (!option || typeof option !== "object") return [];
-          const parsed = option as Record<string, unknown>;
-          if (typeof parsed.label !== "string") return [];
-          return [{
-            label: parsed.label,
-            description:
-              typeof parsed.description === "string" ? parsed.description : undefined,
-          }];
-        })
+      ? item.options.flatMap<{ label: string; description?: string }>(
+          (option) => {
+            if (!option || typeof option !== "object") return [];
+            const parsed = option as Record<string, unknown>;
+            if (typeof parsed.label !== "string") return [];
+            return [
+              {
+                label: parsed.label,
+                description:
+                  typeof parsed.description === "string"
+                    ? parsed.description
+                    : undefined,
+              },
+            ];
+          },
+        )
       : undefined;
-    return [{
-      question: item.question,
-      header: typeof item.header === "string" ? item.header : undefined,
-      multiSelect: Boolean(item.multiSelect),
-      options,
-    }];
+    return [
+      {
+        question: item.question,
+        header: typeof item.header === "string" ? item.header : undefined,
+        multiSelect: Boolean(item.multiSelect),
+        options,
+      },
+    ];
   });
   return questions.length
     ? { toolUseId: String(block.id || ""), questions }
