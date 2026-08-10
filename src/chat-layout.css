@@ -19,13 +19,14 @@ body,
 .messages {
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
   overflow-anchor: none;
 }
 
 .messages::after {
-  content: '';
+  content: "";
   display: block;
   width: 1px;
   height: 1px;
@@ -59,6 +60,9 @@ article.assistant {
 }
 
 .assistant .bubble {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 

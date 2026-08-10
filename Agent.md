@@ -56,12 +56,18 @@
 - 工具轮分类依赖完整 `assistant` 事件；修改 `--include-partial-messages`、事件顺序或流聚合逻辑时，必须覆盖“过程叙述 + tool_use + 最终回答”的回归测试。
 - `activity` 插入助手消息之前，并持久化到数据库。
 - Thinking 内容使用与助手正文一致的 Markdown 渲染能力；Read 应直接显示文件路径，Bash 应优先显示 description，工具详情保持折叠的 `IN` / `OUT` 结构。
+- `thinking_delta` 必须实时合并到同一条 Thinking activity 并持续更新，而不是等完整 assistant 事件后才显示或为每个 delta 新建消息。
+- Claude 在工具调用前输出的普通 text narration 和子 Agent 文本必须使用独立 `narration` activity，像助手过程文字一样直接打印；不得归类为 Thinking，也不得拼入最终正文。Thinking、Read、Bash 等活动卡片继续默认折叠。
+- narration 的实时事件和历史消息都必须重排到其对应的连续工具卡片之前，保持“过程说明 → 工具调用”的语义顺序。
+- 带 `parent_tool_use_id` 的子 Agent `text_delta` 不能拼入最终助手正文；子 Agent 的完整 text block 必须作为可渲染 Markdown 的 Agent activity 展示和持久化。
 - `question` 事件必须在输入框上方呈现 Submit answer 面板；提交答案后要继续同一个 Web 会话。
 - 助手正文末尾保留复制、重试、耗时和 Token 统计控件；重试应复用对应的用户问题，而不是复制助手答案。
 - 回答期间发送按钮必须切换为中止按钮；中止应关闭浏览器流和 Claude 子进程、保留部分输出且不显示为错误。
 - 新消息发送后必须定位到最新内容；流式 `delta` 和 `activity` 到达时持续跟随底部。
 - 用户主动上滚时应暂停自动跟随，回到底部附近后恢复。
+- `.messages` 只允许纵向滚动；长链接、代码、表格、图片和工具内容必须在自身边界内换行或局部滚动，不得让整个对话区域出现横向滚动条。
 - 流式阶段不得调用 MathJax 修改 React DOM；回答完成后才能统一执行公式排版。
+- Markdown 围栏代码块使用 `rehype-highlight` 高亮：优先采用代码围栏声明的语言，未声明时自动检测，未知语言安全回退为普通代码；行内代码不得套用块级高亮样式。
 - Markdown 渲染必须有消息级错误边界，单条内容异常时回退为纯文本，不能让应用根节点白屏。
 
 ### Claude 权限模式

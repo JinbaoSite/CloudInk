@@ -29,7 +29,7 @@ Claude Code UI 是一个基于 React、Express、SQLite 和 Claude Code CLI 的�
 ### 对话与 Agent 执行
 
 - NDJSON 实时流式回复，可随时强制中止并保留已生成内容。
-- Thinking、Read、Write、Edit、Bash、Agent、Skill 和工具结果按执行顺序展示。
+- Claude 在工具调用前输出的过程说明会直接打印在对应工具之前，子 Agent 中间文本也会进入对话流；Thinking、Read、Write、Edit、Bash、Skill 和工具结果按执行顺序展示。
 - 工具卡片直接显示文件路径或 Bash description，详情中展示折叠的 `IN` / `OUT`。
 - 工具调用轮文本自动归入 Thinking，只有最终回答保存为助手正文。
 - Claude 需要确认时，在输入框上方显示 Submit answer 面板。
@@ -38,7 +38,7 @@ Claude Code UI 是一个基于 React、Express、SQLite 和 Claude Code CLI 的�
 
 ### 输入与内容
 
-- Markdown、GFM、代码块和 MathJax 数学公式渲染。
+- Markdown、GFM、自动语言识别的代码语法高亮和 MathJax 数学公式渲染。
 - `Auto`、`Plan`、`Manual`、`Edit automatically` 四种执行模式。
 - `/` 菜单动态读取 Claude CLI、用户配置、插件和工作区中的 Commands/Skills 及真实 description。
 - `@` 搜索并引用当前用户工作区文件。

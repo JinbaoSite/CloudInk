@@ -121,38 +121,63 @@
   font-size: 12px;
   line-height: 1.6;
 }
-.thinking-markdown .markdown-content > :first-child { margin-top: 0; }
-.thinking-markdown .markdown-content > :last-child { margin-bottom: 0; }
-.thinking-markdown p { margin: 0 0 .75em; }
+.activity-narration {
+  min-width: 0;
+  max-width: calc(100% - 26px);
+  width: min(100%, 800px);
+  margin: -8px 0 18px 26px;
+  color: #4f4a43;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.activity-narration .markdown-content > :first-child {
+  margin-top: 0;
+}
+.activity-narration .markdown-content > :last-child {
+  margin-bottom: 0;
+}
+.activity-narration p {
+  margin: 0 0 0.65em;
+}
+.thinking-markdown .markdown-content > :first-child {
+  margin-top: 0;
+}
+.thinking-markdown .markdown-content > :last-child {
+  margin-bottom: 0;
+}
+.thinking-markdown p {
+  margin: 0 0 0.75em;
+}
 .thinking-markdown h1,
 .thinking-markdown h2,
 .thinking-markdown h3 {
-  margin: 1em 0 .45em;
+  margin: 1em 0 0.45em;
   color: #565149;
   font-size: 1em;
   line-height: 1.4;
 }
 .thinking-markdown ul,
 .thinking-markdown ol {
-  margin: .55em 0;
+  margin: 0.55em 0;
   padding-left: 1.5em;
 }
 .thinking-markdown blockquote {
-  margin: .75em 0;
-  padding-left: .8em;
+  margin: 0.75em 0;
+  padding-left: 0.8em;
   border-left: 2px solid #d6d1c8;
   color: #89837a;
 }
 .thinking-markdown :not(pre) > code {
-  padding: .12em .3em;
+  padding: 0.12em 0.3em;
   border-radius: 3px;
   background: #ebe8e1;
   color: #555047;
-  font-size: .92em;
+  font-size: 0.92em;
 }
 .activity-card.thinking .thinking-markdown pre {
   max-height: 240px;
-  margin: .7em 0;
+  margin: 0.7em 0;
   padding: 10px 11px;
   border: 0;
   border-radius: 6px;
@@ -163,7 +188,7 @@
 .thinking-markdown table {
   display: block;
   max-width: 100%;
-  margin: .75em 0;
+  margin: 0.75em 0;
   overflow-x: auto;
   border-collapse: collapse;
 }
@@ -233,7 +258,7 @@
     SFMono-Regular,
     Menlo,
     monospace;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   text-align: center;
 }
 
@@ -293,7 +318,7 @@
   border: 1.5px solid #cbc6bd;
   border-top-color: #615c54;
   border-radius: 50%;
-  animation: activity-spin .8s linear infinite;
+  animation: activity-spin 0.8s linear infinite;
 }
 .live-status-dots {
   display: flex;
@@ -307,22 +332,45 @@
   background: #8c867d;
   animation: activity-dot 1.2s ease-in-out infinite;
 }
-.live-status-dots i:nth-child(2) { animation-delay: .15s; }
-.live-status-dots i:nth-child(3) { animation-delay: .3s; }
+.live-status-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.live-status-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
 
 @keyframes activity-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 @keyframes activity-pulse {
-  0%, 100% { opacity: .5; transform: scale(.92); }
-  50% { opacity: 1; transform: scale(1); }
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 @keyframes activity-shimmer {
-  to { background-position: -200% 0; }
+  to {
+    background-position: -200% 0;
+  }
 }
 @keyframes activity-dot {
-  0%, 60%, 100% { opacity: .35; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-2px); }
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -338,5 +386,9 @@
   .activity-card {
     width: 100%;
     margin-left: 0;
+  }
+  .activity-narration {
+    width: calc(100% - 20px);
+    margin-left: 20px;
   }
 }

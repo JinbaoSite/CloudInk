@@ -40,7 +40,7 @@ import "./activity.css";
 import "./composer.css";
 type Session = { id: string; title: string; updated_at: string };
 type Activity = {
-  kind: "status" | "thinking" | "tool" | "tool_result";
+  kind: "status" | "thinking" | "narration" | "tool" | "tool_result";
   label: string;
   detail?: string;
   toolUseId?: string;
@@ -140,7 +140,13 @@ function localId(prefix: string) {
 function parseActivity(message: Message) {
   if (message.role !== "activity") return null;
   try {
-    return JSON.parse(message.content) as Activity;
+    const activity = JSON.parse(message.content) as Activity;
+    if (
+      activity.kind === "thinking" &&
+      activity.toolUseId?.startsWith("narration-")
+    )
+      return { ...activity, kind: "narration" as const };
+    return activity;
   } catch {
     return null;
   }
@@ -198,6 +204,18 @@ function mergeActivityMessages(messages: Message[]) {
       }
     }
     merged.push(message);
+  }
+  // Claude confirms a tool-use message only after the tool block has already
+  // streamed. Move its narration back in front of the contiguous tool cards so
+  // historical sessions preserve the semantic order: narration -> tool.
+  for (let index = 0; index < merged.length; index += 1) {
+    if (parseActivity(merged[index])?.kind !== "narration") continue;
+    let target = index;
+    while (target > 0 && parseActivity(merged[target - 1])?.kind === "tool")
+      target -= 1;
+    if (target === index) continue;
+    const [narration] = merged.splice(index, 1);
+    merged.splice(target, 0, narration);
   }
   return merged;
 }
@@ -455,7 +473,7 @@ function App() {
     };
   }, [showSlashMenu]);
   useEffect(() => {
-    if (!active) return;
+    if (!active || !me) return;
     setPendingQuestion(null);
     setQuestionAnswers({});
     setCustomQuestionAnswers({});
@@ -477,7 +495,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [active]);
+  }, [active, me]);
   useLayoutEffect(() => {
     if (!autoScrollRef.current) return;
     const frame = requestAnimationFrame(() => {
@@ -765,21 +783,19 @@ function App() {
                 : message,
             ),
           );
-        if (evt.type === "activity" && evt.activity)
+        if (evt.type === "activity" && evt.activity) {
+          const incomingActivity = evt.activity;
           setMessages((items) => {
-            if (evt.activity?.toolUseId) {
+            if (incomingActivity.toolUseId) {
               const existingIndex = items.findIndex((message) => {
                 const existing = parseActivity(message);
-                return (
-                  existing?.kind === "tool" &&
-                  existing.toolUseId === evt.activity?.toolUseId
-                );
+                return existing?.toolUseId === incomingActivity.toolUseId;
               });
               if (existingIndex >= 0) {
                 const next = [...items];
                 next[existingIndex] = {
                   ...next[existingIndex],
-                  content: JSON.stringify(evt.activity),
+                  content: JSON.stringify(incomingActivity),
                 };
                 return next;
               }
@@ -788,16 +804,25 @@ function App() {
               (message) => message.id === assistantMessageId,
             );
             if (assistantIndex < 0) return items;
+            let insertionIndex = assistantIndex;
+            if (incomingActivity.kind === "narration") {
+              while (
+                insertionIndex > 0 &&
+                parseActivity(items[insertionIndex - 1])?.kind === "tool"
+              )
+                insertionIndex -= 1;
+            }
             return [
-              ...items.slice(0, assistantIndex),
+              ...items.slice(0, insertionIndex),
               {
                 id: localId("activity"),
                 role: "activity",
-                content: JSON.stringify(evt.activity),
+                content: JSON.stringify(incomingActivity),
               },
-              ...items.slice(assistantIndex),
+              ...items.slice(insertionIndex),
             ];
           });
+        }
         if (evt.type === "error")
           throw new Error(evt.error || "Claude 请求失败");
       };
@@ -1069,7 +1094,6 @@ function App() {
           )}
           <div className="chat-heading">
             {sessions.find((s) => s.id === active)?.title || "新对话"}
-            <small>工作区与会话均按用户隔离</small>
           </div>
           <button
             type="button"
@@ -1103,12 +1127,10 @@ function App() {
           )}
           {messages.map((m, i) => {
             if (m.role === "activity") {
-              let activity: Activity;
-              try {
-                activity = JSON.parse(m.content);
-              } catch {
-                activity = { kind: "status", label: m.content };
-              }
+              const activity = parseActivity(m) || {
+                kind: "status" as const,
+                label: m.content,
+              };
               return (
                 <ActivityCard
                   activity={activity}
@@ -1880,6 +1902,13 @@ function ActivityCard({
   activity: Activity;
   inProgress?: boolean;
 }) {
+  if (activity.kind === "narration") {
+    return (
+      <div className="activity-narration">
+        <ReactMarkdown>{activity.detail || ""}</ReactMarkdown>
+      </div>
+    );
+  }
   const title = activityDisplayTitle(activity);
   const icon =
     activity.kind === "thinking"

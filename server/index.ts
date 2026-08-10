@@ -17,13 +17,14 @@ import {
 } from "./auth.js";
 import {
   activitiesFromEvent,
-  completedAssistantTurn,
   detectClaudeCapabilities,
   detectClaudeModel,
   questionsFromEvent,
   responseMetricsFromEvent,
   runClaude,
+  messageBoundaryFromEvent,
   textFromEvent,
+  thinkingDeltaFromEvent,
 } from "./claude.js";
 const app = express();
 const detectedModel = detectClaudeModel(process.cwd());
@@ -410,10 +411,18 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   let answer = "",
     stderr = "";
   let committedAnswer = "";
+  let messageStartAnswer = "";
   let buffer = "";
   let questionAsked = false;
   let responseMetrics: ReturnType<typeof responseMetricsFromEvent> = null;
   const toolActivities = new Map<
+    string,
+    {
+      messageId: string;
+      activity: ReturnType<typeof activitiesFromEvent>[number];
+    }
+  >();
+  const streamingThinking = new Map<
     string,
     {
       messageId: string;
@@ -431,6 +440,9 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
       if (event.type === "system" && event.model)
         sendEvent({ type: "model", model: String(event.model) });
       responseMetrics = responseMetricsFromEvent(event) || responseMetrics;
+      const messageBoundary = messageBoundaryFromEvent(event);
+      if (messageBoundary?.type === "start")
+        messageStartAnswer = committedAnswer;
       const question = questionsFromEvent(event);
       if (question) {
         questionAsked = true;
@@ -441,18 +453,85 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
         answer += text;
         sendEvent({ type: "delta", text });
       }
-      const completedTurn = completedAssistantTurn(event);
-      if (completedTurn?.hasToolUse) {
-        // Partial stream events arrive before we know whether this assistant
-        // turn will call a tool. Retract that narration from the answer once
-        // the completed turn confirms it was execution progress.
-        answer = committedAnswer;
-        sendEvent({ type: "replace_answer", text: answer });
-      } else if (completedTurn) {
-        committedAnswer = answer;
+      const thinkingDelta = thinkingDeltaFromEvent(event);
+      if (thinkingDelta?.text) {
+        const key = thinkingDelta.parentToolUseId;
+        const previous = streamingThinking.get(key);
+        const activity = previous
+          ? {
+              ...previous.activity,
+              detail: `${previous.activity.detail || ""}${thinkingDelta.text}`,
+            }
+          : {
+              kind: "thinking" as const,
+              label: key === "root" ? "Thinking" : "Agent Thinking",
+              detail: thinkingDelta.text,
+              toolUseId: `thinking-${crypto.randomUUID()}`,
+            };
+        if (previous) {
+          previous.activity = activity;
+          db.prepare("UPDATE messages SET content=? WHERE id=?").run(
+            JSON.stringify(activity),
+            previous.messageId,
+          );
+        } else {
+          const messageId = crypto.randomUUID();
+          db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
+            messageId,
+            s.id,
+            "activity",
+            JSON.stringify(activity),
+            new Date().toISOString(),
+          );
+          streamingThinking.set(key, { messageId, activity });
+        }
+        sendEvent({ type: "activity", activity });
+      }
+      if (messageBoundary?.type === "stop") {
+        if (messageBoundary.reason === "tool_use") {
+          const narration = answer.slice(messageStartAnswer.length);
+          answer = messageStartAnswer;
+          sendEvent({ type: "replace_answer", text: answer });
+          if (narration.trim()) {
+            const activity = {
+              kind: "narration" as const,
+              label: "Progress",
+              detail: narration,
+              toolUseId: `narration-${crypto.randomUUID()}`,
+            };
+            db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
+              crypto.randomUUID(),
+              s.id,
+              "activity",
+              JSON.stringify(activity),
+              new Date().toISOString(),
+            );
+            sendEvent({ type: "activity", activity });
+          }
+        } else if (messageBoundary.reason === "end_turn") {
+          committedAnswer = answer;
+        }
       }
       for (const activity of activitiesFromEvent(event, cwd)) {
         const t = new Date().toISOString();
+        if (activity.kind === "thinking") {
+          const key = String(event.parent_tool_use_id || "root");
+          const pending = streamingThinking.get(key);
+          if (pending) {
+            const finalized = {
+              ...pending.activity,
+              label: activity.label,
+              detail: activity.detail || pending.activity.detail,
+            };
+            db.prepare("UPDATE messages SET content=? WHERE id=?").run(
+              JSON.stringify(finalized),
+              pending.messageId,
+            );
+            sendEvent({ type: "activity", activity: finalized });
+            streamingThinking.delete(key);
+            continue;
+          }
+        }
         const previous = activity.toolUseId
           ? toolActivities.get(activity.toolUseId)
           : undefined;

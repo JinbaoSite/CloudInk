@@ -1,5 +1,6 @@
 import { Component, useEffect, useRef, type ReactNode } from "react";
 import Markdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import rehypeMathjax from "rehype-mathjax/browser";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -32,7 +33,10 @@ function RenderedMarkdown({
     <div className="markdown-content" ref={rootRef}>
       <Markdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeMathjax]}
+        rehypePlugins={[
+          [rehypeHighlight, { detect: true, ignoreMissing: true }],
+          rehypeMathjax,
+        ]}
       >
         {children}
       </Markdown>

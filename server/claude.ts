@@ -71,7 +71,7 @@ export type ClaudeCapabilities = {
   skills: string[];
 };
 export type ClaudeActivity = {
-  kind: "status" | "thinking" | "tool" | "tool_result";
+  kind: "status" | "thinking" | "narration" | "tool" | "tool_result";
   label: string;
   detail?: string;
   toolUseId?: string;
@@ -248,7 +248,7 @@ export function runClaude(opts: {
   return child;
 }
 export function textFromEvent(event: ClaudeEvent) {
-  if (event.type === "stream_event") {
+  if (event.type === "stream_event" && !event.parent_tool_use_id) {
     const e = event.event as
       { type?: string; delta?: { type?: string; text?: string } } | undefined;
     if (e?.type === "content_block_delta" && e.delta?.type === "text_delta")
@@ -257,8 +257,33 @@ export function textFromEvent(event: ClaudeEvent) {
   return "";
 }
 
+export function thinkingDeltaFromEvent(event: ClaudeEvent) {
+  if (event.type !== "stream_event") return null;
+  const e = event.event as
+    { type?: string; delta?: { type?: string; thinking?: string } } | undefined;
+  if (e?.type !== "content_block_delta" || e.delta?.type !== "thinking_delta")
+    return null;
+  return {
+    text: e.delta.thinking || "",
+    parentToolUseId: String(event.parent_tool_use_id || "root"),
+  };
+}
+
+export function messageBoundaryFromEvent(event: ClaudeEvent) {
+  if (event.type !== "stream_event" || event.parent_tool_use_id) return null;
+  const e = event.event as
+    { type?: string; delta?: { stop_reason?: string } } | undefined;
+  if (e?.type === "message_start") return { type: "start" as const };
+  if (e?.type === "message_delta" && e.delta?.stop_reason)
+    return {
+      type: "stop" as const,
+      reason: String(e.delta.stop_reason),
+    };
+  return null;
+}
+
 export function completedAssistantTurn(event: ClaudeEvent) {
-  if (event.type !== "assistant") return null;
+  if (event.type !== "assistant" || event.parent_tool_use_id) return null;
   const message = event.message as
     { content?: Array<Record<string, unknown>> } | undefined;
   const content = message?.content || [];
@@ -359,6 +384,7 @@ export function activitiesFromEvent(
       { content?: Array<Record<string, unknown>> } | undefined;
     const content = message?.content || [];
     const hasToolUse = content.some((block) => block.type === "tool_use");
+    const isSubagent = Boolean(event.parent_tool_use_id);
     return content.flatMap<ClaudeActivity>((block) => {
       if (block.type === "thinking" && block.thinking) {
         return [
@@ -377,6 +403,15 @@ export function activitiesFromEvent(
           {
             kind: "thinking" as const,
             label: "Thinking",
+            detail: String(block.text),
+          },
+        ];
+      }
+      if (block.type === "text" && isSubagent && block.text) {
+        return [
+          {
+            kind: "narration" as const,
+            label: "Agent",
             detail: String(block.text),
           },
         ];

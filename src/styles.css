@@ -520,13 +520,6 @@ aside footer button {
     display: grid;
   }
 }
-.chat-heading small {
-  display: block;
-  font-size: 11px;
-  font-weight: 400;
-  color: #999;
-  margin-top: 3px;
-}
 .messages {
   overflow: auto;
   padding: 30px max(20px, calc((100% - 800px) / 2));
@@ -725,9 +718,6 @@ article {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .chat-heading small {
-    display: none;
   }
   .mobile-header-button {
     display: grid;

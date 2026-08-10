@@ -49,9 +49,80 @@
   font-size: 0.9em;
 }
 .assistant .bubble a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
   color: #a44f32;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
+}
+.assistant .bubble pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.markdown-content pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  color: #e8e5df;
+  background: transparent;
+}
+.markdown-content .hljs-comment,
+.markdown-content .hljs-quote {
+  color: #918b82;
+  font-style: italic;
+}
+.markdown-content .hljs-keyword,
+.markdown-content .hljs-selector-tag,
+.markdown-content .hljs-literal,
+.markdown-content .hljs-section,
+.markdown-content .hljs-link {
+  color: #e69a78;
+}
+.markdown-content .hljs-string,
+.markdown-content .hljs-title,
+.markdown-content .hljs-name,
+.markdown-content .hljs-type,
+.markdown-content .hljs-attribute,
+.markdown-content .hljs-symbol,
+.markdown-content .hljs-bullet,
+.markdown-content .hljs-addition,
+.markdown-content .hljs-variable,
+.markdown-content .hljs-template-tag,
+.markdown-content .hljs-template-variable {
+  color: #b9d18b;
+}
+.markdown-content .hljs-number,
+.markdown-content .hljs-meta,
+.markdown-content .hljs-built_in,
+.markdown-content .hljs-builtin-name,
+.markdown-content .hljs-params {
+  color: #d8b77d;
+}
+.markdown-content .hljs-function,
+.markdown-content .hljs-class .hljs-title,
+.markdown-content .hljs-title.function_,
+.markdown-content .hljs-title.class_ {
+  color: #8fc7d8;
+}
+.markdown-content .hljs-attr,
+.markdown-content .hljs-property,
+.markdown-content .hljs-selector-id,
+.markdown-content .hljs-selector-class {
+  color: #c7a8dc;
+}
+.markdown-content .hljs-deletion {
+  color: #e58b84;
+}
+.markdown-content .hljs-emphasis {
+  font-style: italic;
+}
+.markdown-content .hljs-strong {
+  font-weight: 700;
+}
+.assistant .bubble img,
+.assistant .bubble video,
+.assistant .bubble svg {
+  max-width: 100%;
+  height: auto;
 }
 .assistant .bubble input[type="checkbox"] {
   margin-right: 0.45em;
