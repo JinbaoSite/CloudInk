@@ -1,4 +1,11 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -33,11 +40,13 @@ import {
   faHand,
 } from "@fortawesome/free-solid-svg-icons";
 import ReactMarkdown from "./MarkdownMessage";
+import type { OpenWorkspaceFile } from "./WorkspaceEditor";
 import "./styles.css";
 import "./chat-layout.css";
 import "./markdown.css";
 import "./activity.css";
 import "./composer.css";
+import "./workspace-editor.css";
 type Session = { id: string; title: string; updated_at: string };
 type Activity = {
   kind: "status" | "thinking" | "narration" | "tool" | "tool_result";
@@ -64,6 +73,22 @@ type ResponseMetrics = {
 type ExecutionMode = "auto" | "plan" | "manual" | "acceptEdits";
 type Attachment = { name: string; path: string; size: number };
 type WorkspaceFile = { name: string; path: string; size: number };
+type FileClipboard = { file: WorkspaceFile; operation: "copy" | "cut" };
+type FileContextMenu = {
+  x: number;
+  y: number;
+  file?: WorkspaceFile;
+  directory?: string;
+};
+type PendingWorkspaceEntry = {
+  kind: "file" | "folder";
+  directory: string;
+};
+type WorkspaceRenameTarget = {
+  name: string;
+  path: string;
+  kind: "file" | "folder";
+};
 type QuestionOption = { label: string; description?: string };
 type ClaudeQuestion = {
   question: string;
@@ -78,6 +103,7 @@ type FileTreeNode = {
   directories: FileTreeNode[];
   files: WorkspaceFile[];
 };
+const WorkspaceEditor = lazy(() => import("./WorkspaceEditor"));
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
 function sessionIdFromLocation() {
   const match = window.location.pathname.match(/^\/sessions\/([^/]+)\/?$/);
@@ -315,8 +341,14 @@ function App() {
     [currentModel, setCurrentModel] = useState("CLI default"),
     [attachments, setAttachments] = useState<Attachment[]>([]),
     [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]),
+    [workspaceDirectories, setWorkspaceDirectories] = useState<string[]>([]),
     [workspaceFilesLoaded, setWorkspaceFilesLoaded] = useState(false),
     [workspaceFilesLoading, setWorkspaceFilesLoading] = useState(false),
+    [openWorkspaceFiles, setOpenWorkspaceFiles] = useState<OpenWorkspaceFile[]>(
+      [],
+    ),
+    [activeWorkspacePath, setActiveWorkspacePath] = useState(""),
+    [savingWorkspacePath, setSavingWorkspacePath] = useState(""),
     [showMentionMenu, setShowMentionMenu] = useState(false),
     [showSlashMenu, setShowSlashMenu] = useState(false),
     [dynamicCommands, setDynamicCommands] =
@@ -326,6 +358,27 @@ function App() {
     [showModeMenu, setShowModeMenu] = useState(false),
     [sidebarView, setSidebarView] = useState<"sessions" | "files">("sessions"),
     [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth),
+    [workspaceWidth, setWorkspaceWidth] = useState(() => {
+      const saved = Number(localStorage.getItem("claude-ui-workspace-width"));
+      return Number.isFinite(saved) && saved >= 420 ? saved : 620;
+    }),
+    [fileContextMenu, setFileContextMenu] = useState<FileContextMenu | null>(
+      null,
+    ),
+    [fileClipboard, setFileClipboard] = useState<FileClipboard | null>(null),
+    [pendingWorkspaceEntry, setPendingWorkspaceEntry] =
+      useState<PendingWorkspaceEntry | null>(null),
+    [pendingWorkspaceRename, setPendingWorkspaceRename] =
+      useState<WorkspaceRenameTarget | null>(null),
+    [workspaceNameSaving, setWorkspaceNameSaving] = useState(false),
+    [workspaceNameError, setWorkspaceNameError] = useState(""),
+    [workspaceRenameSaving, setWorkspaceRenameSaving] = useState(false),
+    [workspaceRenameError, setWorkspaceRenameError] = useState(""),
+    [workspaceUploadDirectory, setWorkspaceUploadDirectory] = useState(""),
+    [workspaceDropDirectory, setWorkspaceDropDirectory] = useState<
+      string | null
+    >(null),
+    [draggingWorkspaceFiles, setDraggingWorkspaceFiles] = useState(false),
     [sidebarCollapsed, setSidebarCollapsed] = useState(
       () => localStorage.getItem("claude-ui-sidebar-collapsed") === "true",
     ),
@@ -345,6 +398,7 @@ function App() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const workspaceFileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const inputHighlightRef = useRef<HTMLDivElement>(null);
@@ -357,6 +411,7 @@ function App() {
   const skipMessageLoadForRef = useRef("");
   const responseAbortRef = useRef<AbortController | null>(null);
   const resizingSidebarRef = useRef(false);
+  const resizingWorkspaceRef = useRef(false);
   const fileDragDepthRef = useRef(0);
   const slashMatch = input.match(/(?:^|\s)(\/[^\s]*)$/);
   const slashQuery = slashMatch?.[1].toLowerCase() || "";
@@ -409,6 +464,24 @@ function App() {
   useEffect(() => {
     localStorage.setItem("claude-ui-sidebar-width", String(sidebarWidth));
   }, [sidebarWidth]);
+  useEffect(() => {
+    localStorage.setItem("claude-ui-workspace-width", String(workspaceWidth));
+  }, [workspaceWidth]);
+  useEffect(() => {
+    if (!fileContextMenu) return;
+    const close = () => setFileContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("blur", close);
+    };
+  }, [fileContextMenu]);
   useEffect(() => {
     const restoreSessionFromUrl = () => {
       autoScrollRef.current = true;
@@ -663,8 +736,10 @@ function App() {
     try {
       const result = (await api("/workspace/files")) as {
         files: WorkspaceFile[];
+        directories: string[];
       };
       setWorkspaceFiles(result.files);
+      setWorkspaceDirectories(result.directories || []);
       setWorkspaceFilesLoaded(true);
     } catch (loadError) {
       setError((loadError as Error).message);
@@ -675,6 +750,290 @@ function App() {
   function showWorkspaceFiles() {
     setSidebarView("files");
     void loadWorkspaceFiles();
+  }
+  async function refreshWorkspaceFiles() {
+    setWorkspaceFilesLoaded(false);
+    await loadWorkspaceFiles(true);
+  }
+  async function createWorkspaceEntry(name: string) {
+    const pending = pendingWorkspaceEntry;
+    const normalizedName = name.trim();
+    if (!pending) return;
+    if (!normalizedName) {
+      setWorkspaceNameError("名称不能为空");
+      return;
+    }
+    setWorkspaceNameSaving(true);
+    setWorkspaceNameError("");
+    try {
+      await api("/workspace/entry", {
+        method: "POST",
+        body: JSON.stringify({
+          path: pending.directory
+            ? `${pending.directory}/${normalizedName}`
+            : normalizedName,
+          kind: pending.kind,
+        }),
+      });
+      setPendingWorkspaceEntry(null);
+      await refreshWorkspaceFiles();
+    } catch (entryError) {
+      setWorkspaceNameError((entryError as Error).message);
+    } finally {
+      setWorkspaceNameSaving(false);
+    }
+  }
+  function beginWorkspaceRename(target: WorkspaceRenameTarget) {
+    setPendingWorkspaceEntry(null);
+    setWorkspaceNameError("");
+    setWorkspaceRenameError("");
+    setPendingWorkspaceRename(target);
+  }
+  async function renameWorkspaceFile(name: string) {
+    const target = pendingWorkspaceRename;
+    const normalizedName = name.trim();
+    if (!target) return;
+    if (!normalizedName) {
+      setWorkspaceRenameError("名称不能为空");
+      return;
+    }
+    if (normalizedName === target.name) {
+      setPendingWorkspaceRename(null);
+      setWorkspaceRenameError("");
+      return;
+    }
+    if (workspaceRenameSaving) return;
+    setWorkspaceRenameSaving(true);
+    setWorkspaceRenameError("");
+    try {
+      const result = (await api("/workspace/rename", {
+        method: "POST",
+        body: JSON.stringify({
+          path: target.path,
+          name: normalizedName,
+          kind: target.kind,
+        }),
+      })) as { path: string; name: string };
+      if (target.kind === "file") {
+        setOpenWorkspaceFiles((current) =>
+          current.map((openFile) =>
+            openFile.path === target.path
+              ? { ...openFile, ...result }
+              : openFile,
+          ),
+        );
+        if (activeWorkspacePath === target.path)
+          setActiveWorkspacePath(result.path);
+      }
+      setPendingWorkspaceRename(null);
+      await refreshWorkspaceFiles();
+    } catch (renameError) {
+      const message = (renameError as Error).message;
+      setWorkspaceRenameError(
+        /failed to fetch|networkerror|load failed/i.test(message)
+          ? `无法连接 ${window.location.origin}，请刷新页面后重试`
+          : message,
+      );
+    } finally {
+      setWorkspaceRenameSaving(false);
+    }
+  }
+  async function deleteWorkspaceEntry(target: {
+    path: string;
+    kind: "file" | "folder";
+  }) {
+    try {
+      await api(`/workspace/entry?path=${encodeURIComponent(target.path)}`, {
+        method: "DELETE",
+      });
+      const remaining = openWorkspaceFiles.filter(
+        (item) =>
+          item.path !== target.path &&
+          !(
+            target.kind === "folder" && item.path.startsWith(`${target.path}/`)
+          ),
+      );
+      setOpenWorkspaceFiles(remaining);
+      if (
+        activeWorkspacePath === target.path ||
+        (target.kind === "folder" &&
+          activeWorkspacePath.startsWith(`${target.path}/`))
+      )
+        setActiveWorkspacePath(remaining[0]?.path || "");
+      if (
+        fileClipboard?.file.path === target.path ||
+        (target.kind === "folder" &&
+          fileClipboard?.file.path.startsWith(`${target.path}/`))
+      )
+        setFileClipboard(null);
+      await refreshWorkspaceFiles();
+    } catch (deleteError) {
+      setError((deleteError as Error).message);
+    }
+  }
+  async function pasteWorkspaceFile(directory = "") {
+    if (!fileClipboard) return;
+    try {
+      const result = (await api("/workspace/paste", {
+        method: "POST",
+        body: JSON.stringify({
+          source: fileClipboard.file.path,
+          directory,
+          operation: fileClipboard.operation,
+        }),
+      })) as { path: string; source: string; operation: "copy" | "cut" };
+      if (fileClipboard.operation === "cut") {
+        setOpenWorkspaceFiles((current) =>
+          current.map((file) =>
+            file.path === result.source
+              ? {
+                  ...file,
+                  path: result.path,
+                  name: result.path.split("/").pop() || file.name,
+                }
+              : file,
+          ),
+        );
+        if (activeWorkspacePath === result.source)
+          setActiveWorkspacePath(result.path);
+        setFileClipboard(null);
+      }
+      await refreshWorkspaceFiles();
+    } catch (pasteError) {
+      setError((pasteError as Error).message);
+    }
+  }
+  async function uploadWorkspaceFiles(
+    files: FileList | File[] | null,
+    directory = "",
+  ) {
+    if (!files?.length || uploading) return;
+    const selected = Array.from(files).slice(0, 10);
+    const oversized = selected.find((file) => file.size > MAX_UPLOAD_SIZE);
+    if (oversized) return setError(`${oversized.name} 超过 500MB，无法上传`);
+    setUploading(true);
+    try {
+      const form = new FormData();
+      selected.forEach((file) => form.append("files", file));
+      const response = await fetch(
+        `/api/files?directory=${encodeURIComponent(directory)}`,
+        {
+          method: "POST",
+          body: form,
+        },
+      );
+      if (!response.ok)
+        throw new Error((await response.json()).error || "上传失败");
+      await refreshWorkspaceFiles();
+    } catch (uploadError) {
+      setError((uploadError as Error).message);
+    } finally {
+      setUploading(false);
+      setDraggingWorkspaceFiles(false);
+      setWorkspaceDropDirectory(null);
+    }
+  }
+  async function openWorkspaceFile(file: WorkspaceFile) {
+    setMobileSessionsOpen(false);
+    setActiveWorkspacePath(file.path);
+    if (openWorkspaceFiles.some((openFile) => openFile.path === file.path))
+      return;
+    setOpenWorkspaceFiles((current) => [
+      ...current,
+      { ...file, content: "", savedContent: "", loading: true },
+    ]);
+    try {
+      const loaded = (await api(
+        `/workspace/file?path=${encodeURIComponent(file.path)}`,
+      )) as WorkspaceFile & { content: string };
+      setOpenWorkspaceFiles((current) =>
+        current.map((openFile) =>
+          openFile.path === file.path
+            ? {
+                ...openFile,
+                ...loaded,
+                savedContent: loaded.content,
+                loading: false,
+              }
+            : openFile,
+        ),
+      );
+    } catch (openError) {
+      setOpenWorkspaceFiles((current) =>
+        current.map((openFile) =>
+          openFile.path === file.path
+            ? {
+                ...openFile,
+                loading: false,
+                error: (openError as Error).message,
+              }
+            : openFile,
+        ),
+      );
+    }
+  }
+  function updateWorkspaceFile(filePath: string, content: string) {
+    setOpenWorkspaceFiles((current) =>
+      current.map((file) =>
+        file.path === filePath ? { ...file, content } : file,
+      ),
+    );
+  }
+  async function saveWorkspaceFile(filePath: string) {
+    const file = openWorkspaceFiles.find((item) => item.path === filePath);
+    if (!file || file.loading || file.error) return;
+    setSavingWorkspacePath(filePath);
+    try {
+      const result = (await api("/workspace/file", {
+        method: "PUT",
+        body: JSON.stringify({ path: file.path, content: file.content }),
+      })) as { size: number };
+      setOpenWorkspaceFiles((current) =>
+        current.map((item) =>
+          item.path === filePath
+            ? { ...item, size: result.size, savedContent: item.content }
+            : item,
+        ),
+      );
+      setWorkspaceFiles((current) =>
+        current.map((item) =>
+          item.path === filePath ? { ...item, size: result.size } : item,
+        ),
+      );
+    } catch (saveError) {
+      setError((saveError as Error).message);
+    } finally {
+      setSavingWorkspacePath("");
+    }
+  }
+  function closeWorkspaceFile(filePath: string) {
+    const index = openWorkspaceFiles.findIndex(
+      (file) => file.path === filePath,
+    );
+    if (index < 0) return;
+    const file = openWorkspaceFiles[index];
+    if (
+      file.content !== file.savedContent &&
+      !window.confirm(`${file.name} 有未保存的修改，仍要关闭吗？`)
+    )
+      return;
+    const remaining = openWorkspaceFiles.filter(
+      (openFile) => openFile.path !== filePath,
+    );
+    setOpenWorkspaceFiles(remaining);
+    if (activeWorkspacePath === filePath)
+      setActiveWorkspacePath(
+        remaining[Math.min(index, remaining.length - 1)]?.path || "",
+      );
+  }
+  function closeWorkspace() {
+    if (
+      openWorkspaceFiles.some((file) => file.content !== file.savedContent) &&
+      !window.confirm("工作区中有未保存的修改，仍要全部关闭吗？")
+    )
+      return;
+    setOpenWorkspaceFiles([]);
+    setActiveWorkspacePath("");
   }
   function insertFileMention(file: WorkspaceFile) {
     const mention = file.path.includes(" ")
@@ -885,8 +1244,13 @@ function App() {
     : null;
   return (
     <div
-      className={`shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
-      style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
+      className={`shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${openWorkspaceFiles.length ? " workspace-open" : ""}`}
+      style={
+        {
+          "--sidebar-width": `${sidebarWidth}px`,
+          "--workspace-width": `${workspaceWidth}px`,
+        } as React.CSSProperties
+      }
     >
       {mobileSessionsOpen && (
         <button
@@ -980,7 +1344,54 @@ function App() {
             ))}
           </nav>
         ) : (
-          <div className="workspace-browser" role="tabpanel">
+          <div
+            className={`workspace-browser${draggingWorkspaceFiles ? " dragging-files" : ""}`}
+            role="tabpanel"
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setFileContextMenu({ x: event.clientX, y: event.clientY });
+            }}
+            onDragEnter={(event) => {
+              if (!Array.from(event.dataTransfer.types).includes("Files"))
+                return;
+              event.preventDefault();
+              setDraggingWorkspaceFiles(true);
+              setWorkspaceDropDirectory("");
+            }}
+            onDragOver={(event) => {
+              if (!Array.from(event.dataTransfer.types).includes("Files"))
+                return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              if (event.target === event.currentTarget)
+                setWorkspaceDropDirectory("");
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                setDraggingWorkspaceFiles(false);
+                setWorkspaceDropDirectory(null);
+              }
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              void uploadWorkspaceFiles(
+                event.dataTransfer.files,
+                workspaceDropDirectory || "",
+              );
+            }}
+          >
+            <input
+              ref={workspaceFileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) =>
+                void uploadWorkspaceFiles(
+                  event.target.files,
+                  workspaceUploadDirectory,
+                )
+              }
+            />
             <div className="workspace-browser-heading">
               <span title={me.username}>~/{me.username}</span>
               <button
@@ -998,10 +1409,73 @@ function App() {
             </div>
             {workspaceFilesLoading ? (
               <div className="workspace-browser-empty">正在读取文件目录…</div>
-            ) : workspaceFiles.length ? (
-              <WorkspaceFileTree files={workspaceFiles} />
+            ) : workspaceFiles.length ||
+              workspaceDirectories.length ||
+              pendingWorkspaceEntry ? (
+              <WorkspaceFileTree
+                files={workspaceFiles}
+                directories={workspaceDirectories}
+                pendingEntry={pendingWorkspaceEntry}
+                pendingRename={pendingWorkspaceRename}
+                entrySaving={workspaceNameSaving}
+                entryError={workspaceNameError}
+                renameSaving={workspaceRenameSaving}
+                renameError={workspaceRenameError}
+                clipboard={fileClipboard}
+                dropDirectory={workspaceDropDirectory}
+                activePath={activeWorkspacePath}
+                onOpenFile={(file) => void openWorkspaceFile(file)}
+                onCreateEntry={(name) => void createWorkspaceEntry(name)}
+                onCancelEntry={() => {
+                  setPendingWorkspaceEntry(null);
+                  setWorkspaceNameError("");
+                }}
+                onRename={(name) => void renameWorkspaceFile(name)}
+                onCancelRename={() => {
+                  setPendingWorkspaceRename(null);
+                  setWorkspaceRenameError("");
+                }}
+                onContextMenu={(event, file) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setFileContextMenu({
+                    x: event.clientX,
+                    y: event.clientY,
+                    file,
+                  });
+                }}
+                onDirectoryContextMenu={(event, directory) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setFileContextMenu({
+                    x: event.clientX,
+                    y: event.clientY,
+                    directory,
+                  });
+                }}
+                onDropTarget={(event, directory) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = "copy";
+                  setDraggingWorkspaceFiles(true);
+                  setWorkspaceDropDirectory(directory);
+                }}
+                onDropFiles={(event, directory) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void uploadWorkspaceFiles(
+                    event.dataTransfer.files,
+                    directory,
+                  );
+                }}
+              />
             ) : (
               <div className="workspace-browser-empty">工作区暂无文件</div>
+            )}
+            {draggingWorkspaceFiles && (
+              <div className="workspace-drop-overlay">
+                上传到 {workspaceDropDirectory || "工作区根目录"}
+              </div>
             )}
           </div>
         )}
@@ -1069,6 +1543,64 @@ function App() {
         >
           <span />
         </div>
+      )}
+      {openWorkspaceFiles.length > 0 && (
+        <Suspense
+          fallback={
+            <div className="workspace-editor-loading">正在加载编辑器…</div>
+          }
+        >
+          <WorkspaceEditor
+            files={openWorkspaceFiles}
+            activePath={activeWorkspacePath}
+            savingPath={savingWorkspacePath}
+            onActivate={setActiveWorkspacePath}
+            onChange={updateWorkspaceFile}
+            onSave={(filePath) => void saveWorkspaceFile(filePath)}
+            onClose={closeWorkspaceFile}
+            onCloseWorkspace={closeWorkspace}
+            onOpenSidebar={() => setMobileSessionsOpen(true)}
+          />
+        </Suspense>
+      )}
+      {openWorkspaceFiles.length > 0 && (
+        <div
+          className="workspace-resizer"
+          role="separator"
+          aria-label="调整 Workspace 和对话区域宽度"
+          aria-orientation="vertical"
+          tabIndex={0}
+          onPointerDown={(event) => {
+            resizingWorkspaceRef.current = true;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            document.body.classList.add("resizing-workspace");
+          }}
+          onPointerMove={(event) => {
+            if (!resizingWorkspaceRef.current) return;
+            const sidebarOffset = sidebarCollapsed ? 0 : sidebarWidth;
+            setWorkspaceWidth(
+              Math.max(
+                420,
+                Math.min(
+                  window.innerWidth - sidebarOffset - 340,
+                  event.clientX - sidebarOffset,
+                ),
+              ),
+            );
+          }}
+          onPointerUp={(event) => {
+            resizingWorkspaceRef.current = false;
+            event.currentTarget.releasePointerCapture(event.pointerId);
+            document.body.classList.remove("resizing-workspace");
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            setWorkspaceWidth((current) =>
+              Math.max(420, current + (event.key === "ArrowRight" ? 20 : -20)),
+            );
+          }}
+        />
       )}
       <section className="chat">
         <header>
@@ -1574,6 +2106,185 @@ function App() {
           </div>
         </form>
       </section>
+      {fileContextMenu && (
+        <div
+          className="file-context-menu"
+          role="menu"
+          style={{
+            left: Math.min(fileContextMenu.x, window.innerWidth - 200),
+            top: Math.min(fileContextMenu.y, window.innerHeight - 360),
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => setFileContextMenu(null)}
+        >
+          {fileContextMenu.file ? (
+            <>
+              <button
+                role="menuitem"
+                onClick={() => void openWorkspaceFile(fileContextMenu.file!)}
+              >
+                Open
+              </button>
+              <button
+                role="menuitem"
+                onClick={() =>
+                  beginWorkspaceRename({
+                    ...fileContextMenu.file!,
+                    kind: "file",
+                  })
+                }
+              >
+                Rename
+              </button>
+              <button
+                role="menuitem"
+                className="danger"
+                onClick={() =>
+                  void deleteWorkspaceEntry({
+                    path: fileContextMenu.file!.path,
+                    kind: "file",
+                  })
+                }
+              >
+                Delete
+              </button>
+              <hr />
+              <button
+                role="menuitem"
+                onClick={() =>
+                  setFileClipboard({
+                    file: fileContextMenu.file!,
+                    operation: "cut",
+                  })
+                }
+              >
+                Cut
+              </button>
+              <button
+                role="menuitem"
+                onClick={() =>
+                  setFileClipboard({
+                    file: fileContextMenu.file!,
+                    operation: "copy",
+                  })
+                }
+              >
+                Copy
+              </button>
+              <button
+                role="menuitem"
+                disabled={!fileClipboard}
+                onClick={() =>
+                  void pasteWorkspaceFile(
+                    fileContextMenu
+                      .file!.path.split("/")
+                      .slice(0, -1)
+                      .join("/"),
+                  )
+                }
+              >
+                Paste
+              </button>
+              <a
+                role="menuitem"
+                href={`/api/workspace/download?path=${encodeURIComponent(fileContextMenu.file.path)}`}
+                download
+              >
+                Download
+              </a>
+              <hr />
+              <button
+                role="menuitem"
+                onClick={() =>
+                  setPendingWorkspaceEntry({
+                    kind: "file",
+                    directory: fileContextMenu
+                      .file!.path.split("/")
+                      .slice(0, -1)
+                      .join("/"),
+                  })
+                }
+              >
+                New File
+              </button>
+            </>
+          ) : (
+            <>
+              {fileContextMenu.directory && (
+                <>
+                  <button
+                    role="menuitem"
+                    onClick={() =>
+                      beginWorkspaceRename({
+                        path: fileContextMenu.directory!,
+                        name: fileContextMenu.directory!.split("/").pop()!,
+                        kind: "folder",
+                      })
+                    }
+                  >
+                    Rename
+                  </button>
+                  <button
+                    role="menuitem"
+                    className="danger"
+                    onClick={() =>
+                      void deleteWorkspaceEntry({
+                        path: fileContextMenu.directory!,
+                        kind: "folder",
+                      })
+                    }
+                  >
+                    Delete
+                  </button>
+                  <hr />
+                </>
+              )}
+              <button
+                role="menuitem"
+                disabled={!fileClipboard}
+                onClick={() =>
+                  void pasteWorkspaceFile(fileContextMenu.directory || "")
+                }
+              >
+                Paste
+              </button>
+              <button
+                role="menuitem"
+                onClick={() =>
+                  setPendingWorkspaceEntry({
+                    kind: "file",
+                    directory: fileContextMenu.directory || "",
+                  })
+                }
+              >
+                New File
+              </button>
+              <button
+                role="menuitem"
+                onClick={() =>
+                  setPendingWorkspaceEntry({
+                    kind: "folder",
+                    directory: fileContextMenu.directory || "",
+                  })
+                }
+              >
+                New Folder
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setWorkspaceUploadDirectory(fileContextMenu.directory || "");
+                  requestAnimationFrame(() =>
+                    workspaceFileInputRef.current?.click(),
+                  );
+                }}
+              >
+                Upload
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1771,17 +2482,20 @@ function HighlightedComposerInput({ value }: { value: string }) {
   );
 }
 
-function buildFileTree(files: WorkspaceFile[]): FileTreeNode {
+function buildFileTree(
+  files: WorkspaceFile[],
+  directories: string[],
+): FileTreeNode {
   const root: FileTreeNode = {
     name: "",
     path: "",
     directories: [],
     files: [],
   };
-  for (const file of files) {
-    const parts = file.path.split("/");
+  const ensureDirectory = (directoryPath: string) => {
+    const parts = directoryPath.split("/").filter(Boolean);
     let node = root;
-    for (const part of parts.slice(0, -1)) {
+    for (const part of parts) {
       let child = node.directories.find((directory) => directory.name === part);
       if (!child) {
         child = {
@@ -1794,6 +2508,12 @@ function buildFileTree(files: WorkspaceFile[]): FileTreeNode {
       }
       node = child;
     }
+    return node;
+  };
+  directories.forEach(ensureDirectory);
+  for (const file of files) {
+    const parts = file.path.split("/");
+    const node = ensureDirectory(parts.slice(0, -1).join("/"));
     node.files.push(file);
   }
   const sortNode = (node: FileTreeNode) => {
@@ -1805,36 +2525,300 @@ function buildFileTree(files: WorkspaceFile[]): FileTreeNode {
   return root;
 }
 
-function WorkspaceFileTree({ files }: { files: WorkspaceFile[] }) {
-  const root = buildFileTree(files);
+function WorkspaceFileTree({
+  files,
+  directories,
+  pendingEntry,
+  pendingRename,
+  entrySaving,
+  entryError,
+  renameSaving,
+  renameError,
+  clipboard,
+  dropDirectory,
+  activePath,
+  onOpenFile,
+  onCreateEntry,
+  onCancelEntry,
+  onRename,
+  onCancelRename,
+  onContextMenu,
+  onDirectoryContextMenu,
+  onDropTarget,
+  onDropFiles,
+}: {
+  files: WorkspaceFile[];
+  directories: string[];
+  pendingEntry: PendingWorkspaceEntry | null;
+  pendingRename: WorkspaceRenameTarget | null;
+  entrySaving: boolean;
+  entryError: string;
+  renameSaving: boolean;
+  renameError: string;
+  clipboard: FileClipboard | null;
+  dropDirectory: string | null;
+  activePath: string;
+  onOpenFile: (file: WorkspaceFile) => void;
+  onCreateEntry: (name: string) => void;
+  onCancelEntry: () => void;
+  onRename: (name: string) => void;
+  onCancelRename: () => void;
+  onContextMenu: (event: React.MouseEvent, file: WorkspaceFile) => void;
+  onDirectoryContextMenu: (event: React.MouseEvent, directory: string) => void;
+  onDropTarget: (event: React.DragEvent, directory: string) => void;
+  onDropFiles: (event: React.DragEvent, directory: string) => void;
+}) {
+  const root = buildFileTree(files, directories);
   return (
     <div className="file-tree">
+      {pendingEntry?.directory === "" && (
+        <WorkspaceNewEntry
+          entry={pendingEntry}
+          onCreate={onCreateEntry}
+          onCancel={onCancelEntry}
+          saving={entrySaving}
+          error={entryError}
+        />
+      )}
       {root.directories.map((directory) => (
-        <WorkspaceDirectory key={directory.path} node={directory} />
+        <WorkspaceDirectory
+          key={directory.path}
+          node={directory}
+          activePath={activePath}
+          pendingEntry={pendingEntry}
+          pendingRename={pendingRename}
+          entrySaving={entrySaving}
+          entryError={entryError}
+          renameSaving={renameSaving}
+          renameError={renameError}
+          clipboard={clipboard}
+          dropDirectory={dropDirectory}
+          onOpenFile={onOpenFile}
+          onCreateEntry={onCreateEntry}
+          onCancelEntry={onCancelEntry}
+          onRename={onRename}
+          onCancelRename={onCancelRename}
+          onContextMenu={onContextMenu}
+          onDirectoryContextMenu={onDirectoryContextMenu}
+          onDropTarget={onDropTarget}
+          onDropFiles={onDropFiles}
+        />
       ))}
       {root.files.map((file) => (
-        <WorkspaceFileRow key={file.path} file={file} />
+        <WorkspaceFileRow
+          key={file.path}
+          file={file}
+          active={file.path === activePath}
+          renaming={pendingRename?.path === file.path}
+          clipboardOperation={
+            clipboard?.file.path === file.path ? clipboard.operation : null
+          }
+          onOpenFile={onOpenFile}
+          onRename={onRename}
+          onCancelRename={onCancelRename}
+          nameSaving={renameSaving}
+          nameError={renameError}
+          onContextMenu={onContextMenu}
+          onDropTarget={onDropTarget}
+          onDropFiles={onDropFiles}
+        />
       ))}
     </div>
   );
 }
 
-function WorkspaceDirectory({ node }: { node: FileTreeNode }) {
+function WorkspaceNewEntry({
+  entry,
+  onCreate,
+  onCancel,
+  saving,
+  error,
+}: {
+  entry: PendingWorkspaceEntry;
+  onCreate: (name: string) => void;
+  onCancel: () => void;
+  saving: boolean;
+  error: string;
+}) {
+  const [name, setName] = useState("");
   return (
-    <details className="file-directory" open>
-      <summary title={node.path}>
-        <span className="directory-chevron">›</span>
-        <span className="directory-icon" aria-hidden="true">
-          <FontAwesomeIcon icon={faFolder} />
+    <div className="workspace-entry-wrap">
+      <div
+        className="workspace-new-entry"
+        title={
+          entry.directory ? `创建于 ${entry.directory}` : "创建于工作区根目录"
+        }
+      >
+        <span className="workspace-file-icon" aria-hidden="true">
+          <FontAwesomeIcon icon={entry.kind === "folder" ? faFolder : faFile} />
         </span>
-        <span>{node.name}</span>
-      </summary>
+        <input
+          autoFocus
+          disabled={saving}
+          value={name}
+          aria-label={entry.kind === "folder" ? "新文件夹名称" : "新文件名称"}
+          placeholder={entry.kind === "folder" ? "文件夹名称" : "文件名称"}
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              onCreate(name);
+            }
+          }}
+        />
+        <span className="workspace-entry-actions">
+          <button
+            type="button"
+            disabled={saving}
+            aria-label="保存名称"
+            onClick={() => onCreate(name)}
+          >
+            <FontAwesomeIcon icon={faCheck} />
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            aria-label="取消命名"
+            onClick={onCancel}
+          >
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+        </span>
+      </div>
+      {saving ? (
+        <small className="workspace-entry-status">正在创建…</small>
+      ) : (
+        error && <small className="workspace-entry-error">{error}</small>
+      )}
+    </div>
+  );
+}
+
+function WorkspaceDirectory({
+  node,
+  activePath,
+  pendingEntry,
+  pendingRename,
+  entrySaving,
+  entryError,
+  renameSaving,
+  renameError,
+  clipboard,
+  dropDirectory,
+  onOpenFile,
+  onCreateEntry,
+  onCancelEntry,
+  onRename,
+  onCancelRename,
+  onContextMenu,
+  onDirectoryContextMenu,
+  onDropTarget,
+  onDropFiles,
+}: {
+  node: FileTreeNode;
+  activePath: string;
+  pendingEntry: PendingWorkspaceEntry | null;
+  pendingRename: WorkspaceRenameTarget | null;
+  entrySaving: boolean;
+  entryError: string;
+  renameSaving: boolean;
+  renameError: string;
+  clipboard: FileClipboard | null;
+  dropDirectory: string | null;
+  onOpenFile: (file: WorkspaceFile) => void;
+  onCreateEntry: (name: string) => void;
+  onCancelEntry: () => void;
+  onRename: (name: string) => void;
+  onCancelRename: () => void;
+  onContextMenu: (event: React.MouseEvent, file: WorkspaceFile) => void;
+  onDirectoryContextMenu: (event: React.MouseEvent, directory: string) => void;
+  onDropTarget: (event: React.DragEvent, directory: string) => void;
+  onDropFiles: (event: React.DragEvent, directory: string) => void;
+}) {
+  return (
+    <details
+      className={`file-directory${dropDirectory === node.path ? " drop-target" : ""}`}
+      open
+    >
+      {pendingRename?.kind === "folder" && pendingRename.path === node.path ? (
+        <WorkspaceRenameEntry
+          target={pendingRename}
+          iconType={faFolder}
+          onRename={onRename}
+          onCancel={onCancelRename}
+          saving={renameSaving}
+          error={renameError}
+        />
+      ) : (
+        <summary
+          title={node.path}
+          onContextMenu={(event) => onDirectoryContextMenu(event, node.path)}
+          onDragEnter={(event) => onDropTarget(event, node.path)}
+          onDragOver={(event) => onDropTarget(event, node.path)}
+          onDrop={(event) => onDropFiles(event, node.path)}
+        >
+          <span className="directory-chevron">›</span>
+          <span className="directory-icon" aria-hidden="true">
+            <FontAwesomeIcon icon={faFolder} />
+          </span>
+          <span>{node.name}</span>
+        </summary>
+      )}
       <div className="file-directory-children">
+        {pendingEntry?.directory === node.path && (
+          <WorkspaceNewEntry
+            entry={pendingEntry}
+            onCreate={onCreateEntry}
+            onCancel={onCancelEntry}
+            saving={entrySaving}
+            error={entryError}
+          />
+        )}
         {node.directories.map((directory) => (
-          <WorkspaceDirectory key={directory.path} node={directory} />
+          <WorkspaceDirectory
+            key={directory.path}
+            node={directory}
+            activePath={activePath}
+            pendingEntry={pendingEntry}
+            pendingRename={pendingRename}
+            entrySaving={entrySaving}
+            entryError={entryError}
+            renameSaving={renameSaving}
+            renameError={renameError}
+            clipboard={clipboard}
+            dropDirectory={dropDirectory}
+            onOpenFile={onOpenFile}
+            onCreateEntry={onCreateEntry}
+            onCancelEntry={onCancelEntry}
+            onRename={onRename}
+            onCancelRename={onCancelRename}
+            onContextMenu={onContextMenu}
+            onDirectoryContextMenu={onDirectoryContextMenu}
+            onDropTarget={onDropTarget}
+            onDropFiles={onDropFiles}
+          />
         ))}
         {node.files.map((file) => (
-          <WorkspaceFileRow key={file.path} file={file} />
+          <WorkspaceFileRow
+            key={file.path}
+            file={file}
+            active={file.path === activePath}
+            renaming={pendingRename?.path === file.path}
+            clipboardOperation={
+              clipboard?.file.path === file.path ? clipboard.operation : null
+            }
+            onOpenFile={onOpenFile}
+            onRename={onRename}
+            onCancelRename={onCancelRename}
+            nameSaving={renameSaving}
+            nameError={renameError}
+            onContextMenu={onContextMenu}
+            onDropTarget={onDropTarget}
+            onDropFiles={onDropFiles}
+          />
         ))}
       </div>
     </details>
@@ -1879,18 +2863,141 @@ function fileTypeIcon(filename: string) {
   return faFile;
 }
 
-function WorkspaceFileRow({ file }: { file: WorkspaceFile }) {
+function WorkspaceFileRow({
+  file,
+  active,
+  renaming,
+  clipboardOperation,
+  onOpenFile,
+  onRename,
+  onCancelRename,
+  nameSaving,
+  nameError,
+  onContextMenu,
+  onDropTarget,
+  onDropFiles,
+}: {
+  file: WorkspaceFile;
+  active: boolean;
+  renaming: boolean;
+  clipboardOperation: "copy" | "cut" | null;
+  onOpenFile: (file: WorkspaceFile) => void;
+  onRename: (name: string) => void;
+  onCancelRename: () => void;
+  nameSaving: boolean;
+  nameError: string;
+  onContextMenu: (event: React.MouseEvent, file: WorkspaceFile) => void;
+  onDropTarget: (event: React.DragEvent, directory: string) => void;
+  onDropFiles: (event: React.DragEvent, directory: string) => void;
+}) {
   const iconType = fileTypeIcon(file.name);
+  if (renaming)
+    return (
+      <WorkspaceRenameEntry
+        target={{ ...file, kind: "file" }}
+        iconType={iconType}
+        onRename={onRename}
+        onCancel={onCancelRename}
+        saving={nameSaving}
+        error={nameError}
+      />
+    );
   return (
-    <div
-      className="workspace-file"
+    <button
+      type="button"
+      className={`workspace-file${active ? " active" : ""}${clipboardOperation ? ` clipboard-${clipboardOperation}` : ""}`}
       title={`${file.path} · ${formatFileSize(file.size)}`}
+      onClick={() => onOpenFile(file)}
+      onContextMenu={(event) => onContextMenu(event, file)}
+      onDragEnter={(event) =>
+        onDropTarget(event, file.path.split("/").slice(0, -1).join("/"))
+      }
+      onDragOver={(event) =>
+        onDropTarget(event, file.path.split("/").slice(0, -1).join("/"))
+      }
+      onDrop={(event) =>
+        onDropFiles(event, file.path.split("/").slice(0, -1).join("/"))
+      }
     >
       <span className="workspace-file-icon" aria-hidden="true">
         <FontAwesomeIcon icon={iconType} />
       </span>
       <span>{file.name}</span>
       <small>{formatFileSize(file.size)}</small>
+    </button>
+  );
+}
+
+function WorkspaceRenameEntry({
+  target,
+  iconType,
+  onRename,
+  onCancel,
+  saving,
+  error,
+}: {
+  target: WorkspaceRenameTarget;
+  iconType: ReturnType<typeof fileTypeIcon>;
+  onRename: (name: string) => void;
+  onCancel: () => void;
+  saving: boolean;
+  error: string;
+}) {
+  const [name, setName] = useState(target.name);
+  return (
+    <div className="workspace-entry-wrap">
+      <div className="workspace-new-entry workspace-rename-entry">
+        <span className="workspace-file-icon" aria-hidden="true">
+          <FontAwesomeIcon icon={iconType} />
+        </span>
+        <input
+          autoFocus
+          disabled={saving}
+          aria-label={`重命名 ${target.name}`}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          onFocus={(event) => {
+            const extensionIndex =
+              target.kind === "file" ? target.name.lastIndexOf(".") : -1;
+            event.currentTarget.setSelectionRange(
+              0,
+              extensionIndex > 0 ? extensionIndex : target.name.length,
+            );
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              onRename(name);
+            }
+          }}
+        />
+        <span className="workspace-entry-actions">
+          <button
+            type="button"
+            disabled={saving}
+            aria-label="保存名称"
+            onClick={() => onRename(name)}
+          >
+            <FontAwesomeIcon icon={faCheck} />
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            aria-label="取消重命名"
+            onClick={onCancel}
+          >
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+        </span>
+      </div>
+      {saving ? (
+        <small className="workspace-entry-status">正在保存…</small>
+      ) : (
+        error && <small className="workspace-entry-error">{error}</small>
+      )}
     </div>
   );
 }
@@ -2059,4 +3166,7 @@ function formatActivityInput(activity: Activity) {
     return activity.detail || "";
   }
 }
-createRoot(document.getElementById("root")!).render(<App />);
+const rootElement = document.getElementById("root")!;
+const reactRoot = import.meta.hot?.data.reactRoot ?? createRoot(rootElement);
+if (import.meta.hot) import.meta.hot.data.reactRoot = reactRoot;
+reactRoot.render(<App />);

@@ -52,6 +52,9 @@ Claude Code UI 是一个基于 React、Express、SQLite 和 Claude Code CLI 的�
 - 会话地址为 `/sessions/:sessionId`，支持刷新恢复和 History API 导航。
 - 新对话仅在首次发送真实内容时写入历史记录，不产生空白会话。
 - 侧边栏可切换历史记录与文件目录，支持拖拽调宽、收起和展开。
+- 点击文件可展开类似 VS Code 的中间 Workspace；CodeMirror 根据文件类型提供代码高亮、行号、括号匹配、折叠与自动补全，并支持多标签编辑、未保存状态提示、标签关闭，以及按钮或 `Ctrl/Cmd+S` 保存。没有打开文件时 Workspace 自动隐藏，对话区域恢复完整宽度。
+- Workspace 默认获得更宽的编辑空间，并可拖拽它与右侧对话之间的分隔线调整宽度。文件区域支持右键打开、重命名、删除、剪切、复制、粘贴、下载和新建文件；文件夹右键 Delete 会递归删除其中的所有文件和子目录，并关闭该目录下已经打开的编辑器标签。文件与文件夹的 Rename、New File 和 New Folder 都在文件树中直接内联命名，提供 ✓ 保存和 × 取消，也支持 `Enter` 确认、`Esc` 取消，不使用浏览器弹窗。Rename 使用独立状态和专用接口，提交期间会锁定当前命名行，成功后按服务端返回路径刷新文件树，失败则保留输入并在原位展示原因。右击文件夹后创建的文件或文件夹会放入该目录，空白区域也支持粘贴及上传，并可直接拖入文件上传。
+- Cut/Copy 会在源文件上显示状态，Paste 到目录后自动刷新文件树；Cut 同时同步已打开标签的新路径。外部文件拖到文件夹节点时上传到该文件夹，拖到文件时上传到其所在目录，拖到空白处则上传到工作区根目录。
 - 实际 Claude 工作目录为 `<WORKSPACE_DIR>/<username>`。
 
 ### 响应式体验
@@ -66,7 +69,7 @@ Claude Code UI 是一个基于 React、Express、SQLite 和 Claude Code CLI 的�
 
 | 层级      | 技术                                                    |
 | --------- | ------------------------------------------------------- |
-| Web       | React、TypeScript、Vite、Font Awesome                   |
+| Web       | React、TypeScript、Vite、CodeMirror、Font Awesome       |
 | API       | Express、TypeScript、Zod、Multer                        |
 | 数据      | SQLite、better-sqlite3                                  |
 | 认证      | JWT HttpOnly Cookie、bcrypt                             |
@@ -172,6 +175,8 @@ data/
 数据库关系为 `users → sessions → messages`。所有会话与消息查询都会同时校验当前用户。每个 Web 会话还对应一个独立 Claude CLI session ID：首轮使用 `--session-id`，后续使用 `--resume`。
 
 未设置 `CLAUDE_MODEL` 时，服务启动会执行一次无工具、无会话持久化的轻量探测，从 Claude CLI 初始化事件读取实际模型；失败或超时后显示 `CLI default`，正式对话仍会根据运行事件更新模型。
+
+工作区编辑器通过 `GET /api/workspace/file?path=...` 读取文件，通过 `PUT /api/workspace/file` 保存内容；文件管理接口位于 `/api/workspace/entry`、`/api/workspace/paste` 和 `/api/workspace/download`。接口只接受当前登录用户工作区内的路径，在线编辑上限为 5MB；上传附件与文件区拖拽上传的单文件上限均为 500MB。
 
 ## 流式事件
 

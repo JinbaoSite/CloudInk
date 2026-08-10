@@ -10,6 +10,13 @@ import { z } from "zod";
 import { db, workspaceRoot } from "./db.js";
 import { descriptionForSlashItem, discoverSlashDescriptions } from "./slash.js";
 import {
+  readEditableFile,
+  removeWorkspaceEntry,
+  resolveWorkspaceDirectory,
+  resolveWorkspaceFile,
+  resolveWorkspaceTarget,
+} from "./workspace.js";
+import {
   cookieOptions,
   requireAuth,
   tokenFor,
@@ -35,7 +42,7 @@ const slashCapabilityCache = new Map<
     value: Awaited<ReturnType<typeof detectClaudeCapabilities>>;
   }
 >();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
 function safeUploadFilename(originalName: string) {
@@ -58,12 +65,47 @@ const upload = multer({
         .prepare("SELECT username FROM users WHERE id=?")
         .get(uid) as { username: string } | undefined;
       if (!user) return done(new Error("用户不存在"), "");
-      const uploadDir = path.join(workspaceRoot, user.username, "uploads");
-      fs.mkdirSync(uploadDir, { recursive: true });
-      done(null, uploadDir);
+      const workspace = path.join(workspaceRoot, user.username);
+      fs.mkdirSync(workspace, { recursive: true });
+      try {
+        const requestedDirectory =
+          typeof req.query.directory === "string"
+            ? req.query.directory
+            : "uploads";
+        const uploadDir = requestedDirectory
+          ? resolveWorkspaceDirectory(workspace, requestedDirectory)
+          : workspace;
+        done(null, uploadDir);
+      } catch (error) {
+        done(error as Error, "");
+      }
     },
-    filename: (_req, file, done) =>
-      done(null, safeUploadFilename(file.originalname)),
+    filename: (req, file, done) => {
+      if (typeof req.query.directory !== "string")
+        return done(null, safeUploadFilename(file.originalname));
+      const name = path.basename(file.originalname).slice(0, 180) || "file";
+      const extension = path.extname(name);
+      const stem = path.basename(name, extension);
+      try {
+        const uid = (req as AuthedRequest).userId;
+        const user = db
+          .prepare("SELECT username FROM users WHERE id=?")
+          .get(uid) as { username: string } | undefined;
+        if (!user) throw new Error("用户不存在");
+        const workspace = path.join(workspaceRoot, user.username);
+        const directory = resolveWorkspaceDirectory(
+          workspace,
+          req.query.directory,
+        );
+        let candidate = name;
+        let suffix = 1;
+        while (fs.existsSync(path.join(directory, candidate)))
+          candidate = `${stem}-${suffix++}${extension}`;
+        done(null, candidate);
+      } catch (error) {
+        done(error as Error, "");
+      }
+    },
   }),
   limits: { fileSize: MAX_UPLOAD_SIZE, files: 10 },
 });
@@ -174,6 +216,7 @@ app.get("/api/workspace/files", requireAuth, (req, res) => {
   fs.mkdirSync(workspace, { recursive: true });
   const ignored = new Set([".git", "node_modules", ".claude", "dist", "build"]);
   const files: Array<{ name: string; path: string; size: number }> = [];
+  const directories: string[] = [];
   const pending = [workspace];
   while (pending.length && files.length < 2000) {
     const directory = pending.pop()!;
@@ -187,7 +230,12 @@ app.get("/api/workspace/files", requireAuth, (req, res) => {
       if (files.length >= 2000 || entry.isSymbolicLink()) continue;
       const absolutePath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (!ignored.has(entry.name)) pending.push(absolutePath);
+        if (!ignored.has(entry.name)) {
+          directories.push(
+            path.relative(workspace, absolutePath).split(path.sep).join("/"),
+          );
+          pending.push(absolutePath);
+        }
         continue;
       }
       if (!entry.isFile()) continue;
@@ -204,7 +252,201 @@ app.get("/api/workspace/files", requireAuth, (req, res) => {
     }
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  res.json({ files, truncated: files.length >= 2000 });
+  directories.sort((a, b) => a.localeCompare(b));
+  res.json({ files, directories, truncated: files.length >= 2000 });
+});
+function userWorkspace(req: express.Request) {
+  const uid = (req as AuthedRequest).userId;
+  const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
+    { username: string } | undefined;
+  if (!user) return null;
+  return path.join(workspaceRoot, user.username);
+}
+app.get("/api/workspace/file", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  try {
+    const requestedPath = z.string().min(1).parse(req.query.path);
+    const file = readEditableFile(workspace, requestedPath);
+    return res.json({
+      path: requestedPath,
+      name: path.basename(requestedPath),
+      size: file.stat.size,
+      mtime: file.stat.mtime.toISOString(),
+      content: file.content,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "无法读取文件";
+    return res
+      .status(message.includes("no such file") ? 404 : 400)
+      .json({ error: message });
+  }
+});
+app.put("/api/workspace/file", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  const payload = z
+    .object({
+      path: z.string().min(1),
+      content: z.string().max(5 * 1024 * 1024),
+    })
+    .safeParse(req.body);
+  if (!payload.success)
+    return res.status(400).json({ error: "文件内容无效或超过 5MB" });
+  if (Buffer.byteLength(payload.data.content, "utf8") > 5 * 1024 * 1024)
+    return res.status(400).json({ error: "文件内容无效或超过 5MB" });
+  try {
+    const file = readEditableFile(workspace, payload.data.path);
+    fs.writeFileSync(file.absolutePath, payload.data.content, "utf8");
+    const stat = fs.statSync(file.absolutePath);
+    return res.json({
+      path: payload.data.path,
+      size: stat.size,
+      mtime: stat.mtime.toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "无法保存文件";
+    return res
+      .status(message.includes("no such file") ? 404 : 400)
+      .json({ error: message });
+  }
+});
+app.get("/api/workspace/download", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  try {
+    const requestedPath = z.string().min(1).parse(req.query.path);
+    const absolutePath = resolveWorkspaceFile(workspace, requestedPath);
+    const stat = fs.lstatSync(absolutePath);
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error("文件不可下载");
+    const realFile = fs.realpathSync(absolutePath);
+    const relative = path.relative(fs.realpathSync(workspace), realFile);
+    if (relative.startsWith("..") || path.isAbsolute(relative))
+      throw new Error("文件路径无效");
+    return res.download(realFile, path.basename(requestedPath));
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
+});
+app.post("/api/workspace/entry", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  const payload = z
+    .object({ path: z.string().min(1), kind: z.enum(["file", "folder"]) })
+    .safeParse(req.body);
+  if (!payload.success) return res.status(400).json({ error: "名称无效" });
+  try {
+    const target = resolveWorkspaceTarget(workspace, payload.data.path);
+    if (fs.existsSync(target)) throw new Error("同名文件或目录已存在");
+    if (payload.data.kind === "folder") fs.mkdirSync(target);
+    else fs.writeFileSync(target, "", { flag: "wx" });
+    return res.status(201).json({ path: payload.data.path });
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
+});
+app.post("/api/workspace/rename", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  const payload = z
+    .object({
+      path: z.string().min(1),
+      name: z.string().trim().min(1).max(180),
+      kind: z.enum(["file", "folder"]),
+    })
+    .safeParse(req.body);
+  if (
+    !payload.success ||
+    path.posix.basename(payload.data.name) !== payload.data.name ||
+    payload.data.name === "." ||
+    payload.data.name === ".."
+  )
+    return res.status(400).json({ error: "名称无效" });
+  try {
+    const source = resolveWorkspaceFile(workspace, payload.data.path);
+    const sourceStat = fs.lstatSync(source);
+    if (sourceStat.isSymbolicLink()) throw new Error("不支持重命名符号链接");
+    if (
+      (payload.data.kind === "file" && !sourceStat.isFile()) ||
+      (payload.data.kind === "folder" && !sourceStat.isDirectory())
+    )
+      throw new Error("文件类型已变化，请刷新目录后重试");
+    const destinationPath = path.posix.join(
+      path.posix.dirname(payload.data.path),
+      payload.data.name,
+    );
+    const destination = resolveWorkspaceTarget(workspace, destinationPath);
+    if (fs.existsSync(destination)) throw new Error("同名文件或目录已存在");
+    fs.renameSync(source, destination);
+    return res.json({
+      path: destinationPath,
+      name: payload.data.name,
+      kind: payload.data.kind,
+    });
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
+});
+app.delete("/api/workspace/entry", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  try {
+    const requestedPath = z.string().min(1).parse(req.query.path);
+    return res.json(removeWorkspaceEntry(workspace, requestedPath));
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
+});
+app.post("/api/workspace/paste", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  const payload = z
+    .object({
+      source: z.string().min(1),
+      directory: z.string(),
+      operation: z.enum(["copy", "cut"]),
+    })
+    .safeParse(req.body);
+  if (!payload.success) return res.status(400).json({ error: "粘贴参数无效" });
+  try {
+    const source = resolveWorkspaceFile(workspace, payload.data.source);
+    const stat = fs.lstatSync(source);
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error("文件不可粘贴");
+    const directory = resolveWorkspaceDirectory(
+      workspace,
+      payload.data.directory,
+    );
+    const originalName = path.basename(source);
+    if (
+      payload.data.operation === "cut" &&
+      path.resolve(path.dirname(source)) === path.resolve(directory)
+    )
+      return res.json({
+        path: payload.data.source,
+        source: payload.data.source,
+        operation: payload.data.operation,
+      });
+    const extension = path.extname(originalName);
+    const stem = path.basename(originalName, extension);
+    let destination = path.join(directory, originalName);
+    let suffix = 1;
+    while (fs.existsSync(destination))
+      destination = path.join(
+        directory,
+        `${stem}-copy-${suffix++}${extension}`,
+      );
+    if (payload.data.operation === "cut") fs.renameSync(source, destination);
+    else fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+    return res.status(201).json({
+      path: path.relative(workspace, destination).split(path.sep).join("/"),
+      source: payload.data.source,
+      operation: payload.data.operation,
+    });
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
 });
 app.post("/api/files", requireAuth, (req, res) => {
   upload.array("files", 10)(req, res, (error) => {
@@ -226,9 +468,10 @@ app.post("/api/files", requireAuth, (req, res) => {
 
     const saved = files.map((file) => {
       const original = path.basename(file.originalname).slice(0, 180);
+      const workspace = path.join(workspaceRoot, user.username);
       return {
         name: original,
-        path: `uploads/${file.filename}`,
+        path: path.relative(workspace, file.path).split(path.sep).join("/"),
         size: file.size,
       };
     });
