@@ -1,4 +1,8 @@
-# Claude Code UI
+<h1 align="center">Claude Code UI</h1>
+
+<p align="center">
+  <strong>简体中文</strong> · <a href="README.en.md">English</a>
+</p>
 
 <p align="center">
   面向团队和个人的多用户 Claude Code Web 客户端<br />
@@ -176,7 +180,7 @@ data/
 
 未设置 `CLAUDE_MODEL` 时，服务启动会执行一次无工具、无会话持久化的轻量探测，从 Claude CLI 初始化事件读取实际模型；失败或超时后显示 `CLI default`，正式对话仍会根据运行事件更新模型。
 
-工作区编辑器通过 `GET /api/workspace/file?path=...` 读取文件，通过 `PUT /api/workspace/file` 保存内容；文件管理接口位于 `/api/workspace/entry`、`/api/workspace/paste` 和 `/api/workspace/download`。接口只接受当前登录用户工作区内的路径，在线编辑上限为 5MB；上传附件与文件区拖拽上传的单文件上限均为 500MB。
+工作区编辑器通过 `GET /api/workspace/file?path=...` 读取文件，通过 `PUT /api/workspace/file` 保存内容；文件管理接口位于 `/api/workspace/entry`、`/api/workspace/rename`、`/api/workspace/paste` 和 `/api/workspace/download`。接口只接受当前登录用户工作区内的路径，在线编辑上限为 5MB；上传附件与文件区拖拽上传的单文件上限均为 500MB。
 
 ## 流式事件
 
