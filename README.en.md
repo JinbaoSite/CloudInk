@@ -30,6 +30,17 @@ CloudInk is a multi-user AI workspace built with React, Express, SQLite, and the
 
 ## Features
 
+| Capability                | Description                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multi-user agent chat     | Isolated accounts, conversations, Claude CLI sessions, and workspaces with streamed Thinking, Agent, and tool execution.                          |
+| Professional composer     | Execution modes, dynamic Commands/Skills, `@` file references, 500MB attachments, drag-and-drop uploads, pasted screenshots, and multiline input. |
+| Recoverable sessions      | Addressable session URLs with refresh recovery, favorites, deletion, stop, continue, copy, and retry controls.                                    |
+| VS Code-style workspace   | A collaborative sidebar, file tree, multi-tab editor, and Chat layout with syntax highlighting, save state, and resizable panes.                  |
+| Markdown and HTML preview | GFM, syntax highlighting, and MathJax for Markdown; sandboxed live HTML preview with relative CSS, JavaScript, image, and font assets.            |
+| Complete file management  | Create, rename, recursive folder deletion, cut, copy, paste, download, and directory-aware drag-and-drop upload.                                  |
+| Static site publishing    | Publish one HTML file or a complete folder site containing `index.html` through a tokenized public URL.                                           |
+| Desktop and mobile        | Resizable three-pane desktop layout with a compact icon rail, plus mobile navigation, history drawer, and safe-area-aware composer.               |
+
 ### Chat and agent execution
 
 - Real-time NDJSON streaming with force-stop support while preserving generated content.
