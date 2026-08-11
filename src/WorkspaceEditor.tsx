@@ -4,10 +4,12 @@ import CodeMirror from "@uiw/react-codemirror";
 import type { Extension } from "@codemirror/state";
 import {
   faBars,
-  faCode,
+  faEye,
   faFloppyDisk,
+  faPen,
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
+import MarkdownMessage from "./MarkdownMessage";
 
 export type OpenWorkspaceFile = {
   name: string;
@@ -27,7 +29,6 @@ type WorkspaceEditorProps = {
   onChange: (path: string, content: string) => void;
   onSave: (path: string) => void;
   onClose: (path: string) => void;
-  onCloseWorkspace: () => void;
   onOpenSidebar: () => void;
 };
 
@@ -74,6 +75,23 @@ async function languageForFile(filePath: string): Promise<Extension[]> {
   return [];
 }
 
+function isMarkdownFile(filePath: string) {
+  return /\.(?:md|mdx|markdown)$/i.test(filePath);
+}
+
+function isHtmlFile(filePath: string) {
+  return /\.html?$/i.test(filePath);
+}
+
+function htmlPreviewDocument(content: string, filePath: string) {
+  const directory = filePath.split("/").slice(0, -1).map(encodeURIComponent);
+  const previewBase = `${window.location.origin}/api/workspace/preview/${directory.length ? `${directory.join("/")}/` : ""}`;
+  const base = `<base href="${previewBase}">`;
+  return /<head(?:\s[^>]*)?>/i.test(content)
+    ? content.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${base}`)
+    : `${base}${content}`;
+}
+
 export default function WorkspaceEditor({
   files,
   activePath,
@@ -82,13 +100,15 @@ export default function WorkspaceEditor({
   onChange,
   onSave,
   onClose,
-  onCloseWorkspace,
   onOpenSidebar,
 }: WorkspaceEditorProps) {
   const activeFile = files.find((file) => file.path === activePath) || files[0];
   const activeRef = useRef(activeFile);
   activeRef.current = activeFile;
   const [languageExtensions, setLanguageExtensions] = useState<Extension[]>([]);
+  const [fileViews, setFileViews] = useState<
+    Record<string, "preview" | "edit">
+  >({});
 
   useEffect(() => {
     let cancelled = false;
@@ -116,31 +136,27 @@ export default function WorkspaceEditor({
 
   if (!activeFile) return null;
   const dirty = activeFile.content !== activeFile.savedContent;
+  const markdown = isMarkdownFile(activeFile.path);
+  const html = isHtmlFile(activeFile.path);
+  const previewable = markdown || html;
+  const fileView = fileViews[activeFile.path] || "preview";
+  const setFileView = (view: "preview" | "edit") =>
+    setFileViews((current) => ({
+      ...current,
+      [activeFile.path]: view,
+    }));
 
   return (
     <section className="workspace-editor" aria-label="工作区编辑器">
-      <header className="workspace-editor-header">
+      <div className="workspace-tabs" role="tablist" aria-label="已打开文件">
         <button
           type="button"
-          className="workspace-editor-menu"
+          className="workspace-tabs-menu"
           aria-label="打开侧边栏"
           onClick={onOpenSidebar}
         >
           <FontAwesomeIcon icon={faBars} />
         </button>
-        <span>
-          <FontAwesomeIcon icon={faCode} aria-hidden="true" /> Workspace
-        </span>
-        <button
-          type="button"
-          title="关闭工作区"
-          aria-label="关闭工作区"
-          onClick={onCloseWorkspace}
-        >
-          <FontAwesomeIcon icon={faXmark} />
-        </button>
-      </header>
-      <div className="workspace-tabs" role="tablist" aria-label="已打开文件">
         {files.map((file) => {
           const fileDirty = file.content !== file.savedContent;
           return (
@@ -173,7 +189,9 @@ export default function WorkspaceEditor({
           );
         })}
       </div>
-      <div className="workspace-editor-body">
+      <div
+        className={`workspace-editor-body${previewable && !activeFile.loading && !activeFile.error ? " previewable-file" : ""}`}
+      >
         {activeFile.loading ? (
           <div className="workspace-editor-message">正在打开文件…</div>
         ) : activeFile.error ? (
@@ -181,24 +199,77 @@ export default function WorkspaceEditor({
             {activeFile.error}
           </div>
         ) : (
-          <CodeMirror
-            className="workspace-code-editor"
-            aria-label={`编辑 ${activeFile.path}`}
-            height="100%"
-            value={activeFile.content}
-            extensions={languageExtensions}
-            basicSetup={{
-              lineNumbers: true,
-              highlightActiveLine: true,
-              highlightActiveLineGutter: true,
-              foldGutter: true,
-              bracketMatching: true,
-              closeBrackets: true,
-              autocompletion: true,
-              indentOnInput: true,
-            }}
-            onChange={(value) => onChange(activeFile.path, value)}
-          />
+          <>
+            {previewable && (
+              <div
+                className="workspace-preview-toolbar"
+                role="group"
+                aria-label={`${markdown ? "Markdown" : "HTML"} 显示模式`}
+              >
+                <button
+                  type="button"
+                  className={fileView === "preview" ? "active" : ""}
+                  aria-pressed={fileView === "preview"}
+                  onClick={() => setFileView("preview")}
+                >
+                  <FontAwesomeIcon icon={faEye} />
+                  预览
+                </button>
+                <button
+                  type="button"
+                  className={fileView === "edit" ? "active" : ""}
+                  aria-pressed={fileView === "edit"}
+                  onClick={() => setFileView("edit")}
+                >
+                  <FontAwesomeIcon icon={faPen} />
+                  编辑
+                </button>
+              </div>
+            )}
+            {markdown && fileView === "preview" ? (
+              <article
+                className="workspace-markdown-preview"
+                aria-label={`预览 ${activeFile.path}`}
+              >
+                {activeFile.content ? (
+                  <MarkdownMessage>{activeFile.content}</MarkdownMessage>
+                ) : (
+                  <div className="workspace-markdown-empty">
+                    此 Markdown 文件暂无内容
+                  </div>
+                )}
+              </article>
+            ) : html && fileView === "preview" ? (
+              <iframe
+                className="workspace-html-preview"
+                title={`预览 ${activeFile.path}`}
+                sandbox="allow-scripts"
+                srcDoc={htmlPreviewDocument(
+                  activeFile.content,
+                  activeFile.path,
+                )}
+              />
+            ) : (
+              <CodeMirror
+                className="workspace-code-editor"
+                aria-label={`编辑 ${activeFile.path}`}
+                height="100%"
+                value={activeFile.content}
+                extensions={languageExtensions}
+                basicSetup={{
+                  lineNumbers: true,
+                  highlightActiveLine: true,
+                  highlightActiveLineGutter: true,
+                  foldGutter: true,
+                  bracketMatching: true,
+                  closeBrackets: true,
+                  autocompletion: true,
+                  indentOnInput: true,
+                }}
+                onChange={(value) => onChange(activeFile.path, value)}
+              />
+            )}
+          </>
         )}
       </div>
       <footer className="workspace-editor-status">

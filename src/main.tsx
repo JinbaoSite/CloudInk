@@ -1208,15 +1208,6 @@ function App() {
         remaining[Math.min(index, remaining.length - 1)]?.path || "",
       );
   }
-  function closeWorkspace() {
-    if (
-      openWorkspaceFiles.some((file) => file.content !== file.savedContent) &&
-      !window.confirm("工作区中有未保存的修改，仍要全部关闭吗？")
-    )
-      return;
-    setOpenWorkspaceFiles([]);
-    setActiveWorkspacePath("");
-  }
   function insertFileMention(file: WorkspaceFile) {
     const mention = file.path.includes(" ")
       ? `@"${file.path}"`
@@ -1786,7 +1777,6 @@ function App() {
             onChange={updateWorkspaceFile}
             onSave={(filePath) => void saveWorkspaceFile(filePath)}
             onClose={closeWorkspaceFile}
-            onCloseWorkspace={closeWorkspace}
             onOpenSidebar={() => setMobileSessionsOpen(true)}
           />
         </Suspense>

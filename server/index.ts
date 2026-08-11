@@ -411,6 +411,33 @@ function userWorkspace(req: express.Request) {
   if (!user) return null;
   return path.join(workspaceRoot, user.username);
 }
+app.get(/^\/api\/workspace\/preview\/(.+)$/, requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  try {
+    const requestedPath = z.string().min(1).parse(req.params[0]);
+    const absolutePath = resolveWorkspaceFile(workspace, requestedPath);
+    const stat = fs.lstatSync(absolutePath);
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error("预览资源无效");
+    const realWorkspace = fs.realpathSync(workspace);
+    const realFile = fs.realpathSync(absolutePath);
+    const relative = path.relative(realWorkspace, realFile);
+    if (relative.startsWith("..") || path.isAbsolute(relative))
+      throw new Error("文件路径无效");
+    res.set({
+      "Cache-Control": "no-store",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "X-Content-Type-Options": "nosniff",
+    });
+    return res.sendFile(realFile);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "无法读取预览资源";
+    return res.status(message.includes("no such file") ? 404 : 400).json({
+      error: message,
+    });
+  }
+});
 app.get("/api/workspace/file", requireAuth, (req, res) => {
   const workspace = userWorkspace(req);
   if (!workspace) return res.status(401).json({ error: "用户不存在" });
