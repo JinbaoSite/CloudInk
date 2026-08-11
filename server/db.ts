@@ -9,11 +9,36 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 db.exec(`
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at TEXT NOT NULL,username TEXT UNIQUE NOT NULL);
-CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,title TEXT NOT NULL,claude_session_id TEXT UNIQUE NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,title TEXT NOT NULL,claude_session_id TEXT UNIQUE NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,favorite INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS published_pages(id TEXT PRIMARY KEY,token TEXT UNIQUE NOT NULL,user_id TEXT NOT NULL,file_path TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'file',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,UNIQUE(user_id,file_path));
 CREATE INDEX IF NOT EXISTS sessions_user_updated ON sessions(user_id,updated_at DESC);
 CREATE INDEX IF NOT EXISTS messages_session_created ON messages(session_id,created_at);
+CREATE INDEX IF NOT EXISTS published_pages_user_path ON published_pages(user_id,file_path);
 `);
+
+const publishedPageColumns = db
+  .prepare("PRAGMA table_info(published_pages)")
+  .all() as Array<{ name: string }>;
+if (!publishedPageColumns.some((column) => column.name === "kind")) {
+  db.exec(
+    "ALTER TABLE published_pages ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'",
+  );
+}
+
+const sessionColumns = db
+  .prepare("PRAGMA table_info(sessions)")
+  .all() as Array<{
+  name: string;
+}>;
+if (!sessionColumns.some((column) => column.name === "favorite")) {
+  db.exec(
+    "ALTER TABLE sessions ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
+  );
+}
+db.exec(
+  "CREATE INDEX IF NOT EXISTS sessions_user_favorite_updated ON sessions(user_id,favorite DESC,updated_at DESC)",
+);
 
 const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{
   name: string;

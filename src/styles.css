@@ -598,16 +598,53 @@ nav::-webkit-scrollbar-thumb:hover {
   color: inherit;
   text-decoration: none;
 }
-.session button {
+.session-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+  margin-left: 3px;
+}
+.session-action {
+  display: grid;
   visibility: hidden;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
   border: 0;
+  border-radius: 5px;
   background: none;
+  color: #8e887f;
+  cursor: pointer;
+}
+.session-action svg {
+  width: 11px;
+  height: 11px;
+}
+.session-action:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+.session-action:hover,
+.session-action:focus-visible {
+  background: #d2cec5;
+  color: #4d4841;
+}
+.session-action.favorite.active {
+  visibility: visible;
+  color: #75654c;
+}
+.session-action.delete:hover,
+.session-action.delete:focus-visible {
+  color: #a13929;
 }
 .session:hover,
 .session.active {
   background: #dedbd3;
 }
-.session:hover button {
+.session:hover .session-action,
+.session:focus-within .session-action {
   visibility: visible;
 }
 aside footer {
@@ -647,9 +684,17 @@ aside footer {
   font-weight: 500;
 }
 aside footer button {
+  padding: 4px 6px;
   border: 0;
+  border-radius: 5px;
   background: none;
   color: #a04b2f;
+  cursor: pointer;
+}
+aside footer button:hover,
+aside footer button:focus-visible {
+  background: #ded9d1;
+  color: #873f2a;
 }
 .chat {
   display: grid;
@@ -785,6 +830,20 @@ body.resizing-workspace {
   border-radius: 9px;
   background: #fbfaf7;
   box-shadow: 0 14px 38px #2c271c2e;
+}
+.workspace-notice {
+  position: fixed;
+  z-index: 110;
+  right: 24px;
+  bottom: 24px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border: 1px solid #d8d4cc;
+  border-radius: 8px;
+  background: #282724;
+  box-shadow: 0 10px 30px #211e1830;
+  color: #f7f5ef;
+  font-size: 13px;
 }
 .file-context-menu button,
 .file-context-menu a {
@@ -1109,8 +1168,15 @@ article {
   .session-link {
     font-size: 14px;
   }
-  .session button {
+  .session-action {
     visibility: visible;
+    color: #b8b2a9;
+  }
+  .session-action.favorite.active {
+    color: #675c4d;
+  }
+  .session-action.delete {
+    color: #b9ada7;
   }
   .messages {
     padding: 22px 14px;

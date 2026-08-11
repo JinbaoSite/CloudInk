@@ -35,7 +35,9 @@ import {
   faPenToSquare,
   faRotateRight,
   faSliders,
+  faStar,
   faTerminal,
+  faTrashCan,
   faWandMagicSparkles,
   faXmark,
   faHand,
@@ -48,7 +50,12 @@ import "./markdown.css";
 import "./activity.css";
 import "./composer.css";
 import "./workspace-editor.css";
-type Session = { id: string; title: string; updated_at: string };
+type Session = {
+  id: string;
+  title: string;
+  updated_at: string;
+  favorite: 0 | 1;
+};
 type Activity = {
   kind: "status" | "thinking" | "narration" | "tool" | "tool_result";
   label: string;
@@ -74,6 +81,15 @@ type ResponseMetrics = {
 type ExecutionMode = "auto" | "plan" | "manual" | "acceptEdits";
 type Attachment = { name: string; path: string; size: number };
 type WorkspaceFile = { name: string; path: string; size: number };
+type PublishedPage = {
+  file_path: string;
+  kind: "file" | "folder";
+  url: string;
+};
+type PublishableWorkspaceEntry = {
+  path: string;
+  kind: "file" | "folder";
+};
 type FileClipboard = { file: WorkspaceFile; operation: "copy" | "cut" };
 type FileContextMenu = {
   x: number;
@@ -104,7 +120,8 @@ type FileTreeNode = {
   directories: FileTreeNode[];
   files: WorkspaceFile[];
 };
-const WorkspaceEditor = lazy(() => import("./WorkspaceEditor"));
+const loadWorkspaceEditor = () => import("./WorkspaceEditor");
+const WorkspaceEditor = lazy(loadWorkspaceEditor);
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
 function sessionIdFromLocation() {
   const match = window.location.pathname.match(/^\/sessions\/([^/]+)\/?$/);
@@ -234,10 +251,31 @@ function mergeActivityMessages(messages: Message[]) {
   return merged;
 }
 async function api(url: string, options?: RequestInit) {
-  const r = await fetch("/api" + url, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const method = (options?.method || "GET").toUpperCase();
+  let r: Response | undefined;
+  let lastError: unknown;
+  const attempts = method === "GET" ? 3 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt)
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, attempt === 1 ? 250 : 750),
+      );
+    try {
+      r = await fetch("/api" + url, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      break;
+    } catch (requestError) {
+      lastError = requestError;
+    }
+  }
+  if (!r)
+    throw new Error(
+      lastError instanceof Error && lastError.message
+        ? lastError.message
+        : "连接服务器失败，请稍后重试",
+    );
   if (!r.ok)
     throw new Error((await r.json().catch(() => ({}))).error || "请求失败");
   return r.status === 204 ? null : r.json();
@@ -339,6 +377,7 @@ function App() {
     [workspaceDirectories, setWorkspaceDirectories] = useState<string[]>([]),
     [workspaceFilesLoaded, setWorkspaceFilesLoaded] = useState(false),
     [workspaceFilesLoading, setWorkspaceFilesLoading] = useState(false),
+    [publishedPages, setPublishedPages] = useState<Record<string, string>>({}),
     [openWorkspaceFiles, setOpenWorkspaceFiles] = useState<OpenWorkspaceFile[]>(
       [],
     ),
@@ -370,6 +409,7 @@ function App() {
     [workspaceNameError, setWorkspaceNameError] = useState(""),
     [workspaceRenameSaving, setWorkspaceRenameSaving] = useState(false),
     [workspaceRenameError, setWorkspaceRenameError] = useState(""),
+    [workspaceNotice, setWorkspaceNotice] = useState(""),
     [workspaceUploadDirectory, setWorkspaceUploadDirectory] = useState(""),
     [workspaceDropDirectory, setWorkspaceDropDirectory] = useState<
       string | null
@@ -388,6 +428,7 @@ function App() {
       Record<number, string>
     >({}),
     [copiedMessageId, setCopiedMessageId] = useState(""),
+    [favoriteUpdatingId, setFavoriteUpdatingId] = useState(""),
     [mobileSessionsOpen, setMobileSessionsOpen] = useState(false),
     [uploading, setUploading] = useState(false),
     [draggingFiles, setDraggingFiles] = useState(false),
@@ -426,6 +467,32 @@ function App() {
   const activeMode =
     executionModes.find((option) => option.value === mode) || executionModes[0];
   const load = () => api("/sessions").then(setSessions);
+  async function toggleSessionFavorite(session: Session) {
+    if (favoriteUpdatingId) return;
+    const favorite: 0 | 1 = session.favorite ? 0 : 1;
+    const previous = sessions;
+    setFavoriteUpdatingId(session.id);
+    setSessions((current) =>
+      current
+        .map((item) => (item.id === session.id ? { ...item, favorite } : item))
+        .sort(
+          (a, b) =>
+            b.favorite - a.favorite || b.updated_at.localeCompare(a.updated_at),
+        ),
+    );
+    try {
+      await api(`/sessions/${session.id}/favorite`, {
+        method: "POST",
+        body: JSON.stringify({ favorite: Boolean(favorite) }),
+      });
+      await load();
+    } catch (favoriteError) {
+      setSessions(previous);
+      setError(`收藏失败：${(favoriteError as Error).message}`);
+    } finally {
+      setFavoriteUpdatingId("");
+    }
+  }
   async function refreshSlashItems() {
     const requestId = ++slashItemsRequestRef.current;
     setDynamicCommands([]);
@@ -745,6 +812,9 @@ function App() {
     if ((!force && workspaceFilesLoaded) || workspaceFilesLoading) return;
     setWorkspaceFilesLoading(true);
     try {
+      const publicationsRequest = (
+        api("/workspace/publications") as Promise<{ pages: PublishedPage[] }>
+      ).catch(() => null);
       const result = (await api("/workspace/files")) as {
         files: WorkspaceFile[];
         directories: string[];
@@ -752,6 +822,14 @@ function App() {
       setWorkspaceFiles(result.files);
       setWorkspaceDirectories(result.directories || []);
       setWorkspaceFilesLoaded(true);
+      void publicationsRequest.then((publications) => {
+        if (!publications) return;
+        setPublishedPages(
+          Object.fromEntries(
+            publications.pages.map((page) => [page.file_path, page.url]),
+          ),
+        );
+      });
     } catch (loadError) {
       setError((loadError as Error).message);
     } finally {
@@ -762,6 +840,9 @@ function App() {
     setSidebarView("files");
     setSidebarCollapsed(false);
     void loadWorkspaceFiles();
+    // Give the small directory response and React paint priority. The heavier
+    // CodeMirror chunk can warm in the background after the sidebar is ready.
+    window.setTimeout(() => void loadWorkspaceEditor(), 600);
   }
   async function refreshWorkspaceFiles() {
     setWorkspaceFilesLoaded(false);
@@ -883,6 +964,71 @@ function App() {
       setError((deleteError as Error).message);
     }
   }
+  async function copyText(value: string) {
+    if (navigator.clipboard?.writeText)
+      return navigator.clipboard.writeText(value);
+    const copyTarget = document.createElement("textarea");
+    copyTarget.value = value;
+    copyTarget.style.position = "fixed";
+    copyTarget.style.opacity = "0";
+    document.body.appendChild(copyTarget);
+    copyTarget.select();
+    document.execCommand("copy");
+    copyTarget.remove();
+  }
+  function showWorkspaceNotice(message: string) {
+    setWorkspaceNotice(message);
+    window.setTimeout(
+      () =>
+        setWorkspaceNotice((current) => (current === message ? "" : current)),
+      2600,
+    );
+  }
+  async function publishWorkspacePage(target: PublishableWorkspaceEntry) {
+    try {
+      const result = (await api("/workspace/publish", {
+        method: "POST",
+        body: JSON.stringify(target),
+      })) as { path: string; url: string };
+      setPublishedPages((current) => ({
+        ...current,
+        [result.path]: result.url,
+      }));
+      try {
+        await copyText(`${window.location.origin}${result.url}`);
+        showWorkspaceNotice("发布成功，公开链接已复制到剪贴板");
+      } catch {
+        showWorkspaceNotice("发布成功，可从右键菜单复制或打开公开链接");
+      }
+    } catch (publishError) {
+      setError(`发布失败：${(publishError as Error).message}`);
+    }
+  }
+  async function copyPublishedPageLink(target: { path: string }) {
+    const url = publishedPages[target.path];
+    if (!url) return;
+    try {
+      await copyText(`${window.location.origin}${url}`);
+      showWorkspaceNotice("公开链接已复制到剪贴板");
+    } catch {
+      setError("复制失败，请手动打开链接后复制地址");
+    }
+  }
+  async function unpublishWorkspacePage(target: { path: string }) {
+    try {
+      await api(`/workspace/publish?path=${encodeURIComponent(target.path)}`, {
+        method: "DELETE",
+      });
+      setPublishedPages((current) => {
+        const next = { ...current };
+        delete next[target.path];
+        return next;
+      });
+      showWorkspaceNotice("已取消发布，原公开链接不再可访问");
+    } catch (publishError) {
+      setError(`取消发布失败：${(publishError as Error).message}`);
+    }
+  }
   async function pasteWorkspaceFile(directory = "") {
     if (!fileClipboard) return;
     try {
@@ -946,6 +1092,7 @@ function App() {
     }
   }
   async function openWorkspaceFile(file: WorkspaceFile) {
+    void loadWorkspaceEditor();
     setMobileSessionsOpen(false);
     setActiveWorkspacePath(file.path);
     if (openWorkspaceFiles.some((openFile) => openFile.path === file.path))
@@ -1329,6 +1476,7 @@ function App() {
             aria-selected={sidebarView === "files"}
             className={sidebarView === "files" ? "active" : ""}
             title="文件"
+            onPointerEnter={() => void loadWorkspaceEditor()}
             onClick={showWorkspaceFiles}
           >
             <FontAwesomeIcon icon={faFolderTree} aria-hidden="true" />
@@ -1354,20 +1502,39 @@ function App() {
                 >
                   {s.title}
                 </a>
-                <button
-                  aria-label={`删除 ${s.title}`}
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    await api("/sessions/" + s.id, { method: "DELETE" });
-                    if (active === s.id) {
-                      navigateToSession("", true);
-                      setMessages([]);
-                    }
-                    load();
-                  }}
-                >
-                  ×
-                </button>
+                <span className="session-actions">
+                  <button
+                    type="button"
+                    className={`session-action favorite${s.favorite ? " active" : ""}`}
+                    aria-label={`${s.favorite ? "取消收藏" : "收藏"} ${s.title}`}
+                    aria-pressed={Boolean(s.favorite)}
+                    title={s.favorite ? "取消收藏" : "收藏"}
+                    disabled={favoriteUpdatingId === s.id}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void toggleSessionFavorite(s);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faStar} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="session-action delete"
+                    aria-label={`删除 ${s.title}`}
+                    title="删除"
+                    onClick={async (event) => {
+                      event.stopPropagation();
+                      await api("/sessions/" + s.id, { method: "DELETE" });
+                      if (active === s.id) {
+                        navigateToSession("", true);
+                        setMessages([]);
+                      }
+                      await load();
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faTrashCan} aria-hidden="true" />
+                  </button>
+                </span>
               </div>
             ))}
           </nav>
@@ -2140,6 +2307,11 @@ function App() {
           </div>
         </form>
       </section>
+      {workspaceNotice && (
+        <div className="workspace-notice" role="status" aria-live="polite">
+          {workspaceNotice}
+        </div>
+      )}
       {fileContextMenu && (
         <div
           className="file-context-menu"
@@ -2226,6 +2398,52 @@ function App() {
               >
                 Download
               </a>
+              {/\.html?$/i.test(fileContextMenu.file.path) && (
+                <>
+                  <hr />
+                  {publishedPages[fileContextMenu.file.path] ? (
+                    <>
+                      <button
+                        role="menuitem"
+                        onClick={() =>
+                          void copyPublishedPageLink(fileContextMenu.file!)
+                        }
+                      >
+                        Copy published link
+                      </button>
+                      <a
+                        role="menuitem"
+                        href={publishedPages[fileContextMenu.file.path]}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open published page
+                      </a>
+                      <button
+                        role="menuitem"
+                        className="danger"
+                        onClick={() =>
+                          void unpublishWorkspacePage(fileContextMenu.file!)
+                        }
+                      >
+                        Unpublish
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      role="menuitem"
+                      onClick={() =>
+                        void publishWorkspacePage({
+                          path: fileContextMenu.file!.path,
+                          kind: "file",
+                        })
+                      }
+                    >
+                      Publish webpage
+                    </button>
+                  )}
+                </>
+              )}
               <hr />
               <button
                 role="menuitem"
@@ -2270,6 +2488,51 @@ function App() {
                   >
                     Delete
                   </button>
+                  {publishedPages[fileContextMenu.directory] ? (
+                    <>
+                      <button
+                        role="menuitem"
+                        onClick={() =>
+                          void copyPublishedPageLink({
+                            path: fileContextMenu.directory!,
+                          })
+                        }
+                      >
+                        Copy published link
+                      </button>
+                      <a
+                        role="menuitem"
+                        href={publishedPages[fileContextMenu.directory]}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open published site
+                      </a>
+                      <button
+                        role="menuitem"
+                        className="danger"
+                        onClick={() =>
+                          void unpublishWorkspacePage({
+                            path: fileContextMenu.directory!,
+                          })
+                        }
+                      >
+                        Unpublish
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      role="menuitem"
+                      onClick={() =>
+                        void publishWorkspacePage({
+                          path: fileContextMenu.directory!,
+                          kind: "folder",
+                        })
+                      }
+                    >
+                      Publish folder as website
+                    </button>
+                  )}
                   <hr />
                 </>
               )}

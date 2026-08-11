@@ -39,6 +39,170 @@ const detectedModel = detectClaudeModel(process.cwd());
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
 app.get("/api/public-config", (_req, res) => res.json({ appName }));
+type PublishedPageRecord = {
+  file_path: string;
+  kind: "file" | "folder";
+  username: string;
+  token: string;
+};
+function encodedPublicPath(value: string) {
+  return value.split("/").map(encodeURIComponent).join("/");
+}
+function publicPageUrl(page: PublishedPageRecord) {
+  const publishedPath =
+    page.kind === "folder" ? `${page.file_path}/` : page.file_path;
+  return `/${encodeURIComponent(page.username)}/published/${encodedPublicPath(publishedPath)}?token=${page.token}`;
+}
+function legacyPublishedResourceUrl(page: PublishedPageRecord, resource = "") {
+  if (page.kind === "file") return `/published/${page.token}/page.html`;
+  const folderName = encodeURIComponent(path.posix.basename(page.file_path));
+  const suffix = resource ? `/${encodedPublicPath(resource)}` : "/";
+  return `/published/${page.token}/${folderName}${suffix}`;
+}
+function servePublishedResource(
+  page: PublishedPageRecord,
+  resource: string,
+  res: express.Response,
+) {
+  try {
+    const workspace = path.join(workspaceRoot, page.username);
+    const publicationRoot = resolveWorkspaceFile(workspace, page.file_path);
+    let absolutePath: string;
+    if (page.kind === "file") {
+      if (resource) throw new Error("Page not found");
+      absolutePath = publicationRoot;
+    } else {
+      const requestedResource = resource || "index.html";
+      const normalizedResource = requestedResource.endsWith("/")
+        ? `${requestedResource}index.html`
+        : requestedResource;
+      absolutePath = resolveWorkspaceFile(publicationRoot, normalizedResource);
+      const realRoot = fs.realpathSync(publicationRoot);
+      const realResource = fs.realpathSync(absolutePath);
+      const relative = path.relative(realRoot, realResource);
+      if (relative.startsWith("..") || path.isAbsolute(relative))
+        throw new Error("Page not found");
+    }
+    const stat = fs.lstatSync(absolutePath);
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error("Page not found");
+    res.set({
+      "Access-Control-Allow-Origin": "*",
+      "Cross-Origin-Resource-Policy": "cross-origin",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "no-cache",
+    });
+    if (/\.html?$/i.test(absolutePath)) {
+      // A published document is untrusted user HTML. A sandboxed opaque origin
+      // lets scripts run without inheriting the Web UI login origin.
+      res.set(
+        "Content-Security-Policy",
+        "sandbox allow-scripts allow-forms allow-modals allow-popups",
+      );
+    }
+    return res.sendFile(absolutePath);
+  } catch {
+    return res.status(404).send("Page not found");
+  }
+}
+app.get(/^\/([a-z0-9][a-z0-9_-]*)\/published\/(.+)$/, (req, res) => {
+  const username = req.params[0];
+  const requestedPath = req.params[1];
+  const queryToken = z
+    .string()
+    .regex(/^[a-f0-9]{48}$/)
+    .safeParse(req.query.token);
+  if (req.query.token !== undefined && !queryToken.success)
+    return res.status(404).send("Page not found");
+  const cookieTokens = Object.entries(req.cookies || {})
+    .filter(([name, value]) =>
+      Boolean(name.startsWith("cloudink_published_") && value),
+    )
+    .map(([, value]) => String(value));
+  const tokens = queryToken.success ? [queryToken.data] : cookieTokens;
+  let page: PublishedPageRecord | undefined;
+  for (const token of tokens) {
+    const candidate = db
+      .prepare(
+        "SELECT p.file_path,p.kind,p.token,u.username FROM published_pages p JOIN users u ON u.id=p.user_id WHERE p.token=? AND u.username=?",
+      )
+      .get(token, username) as PublishedPageRecord | undefined;
+    if (!candidate) continue;
+    const matches =
+      candidate.kind === "file"
+        ? requestedPath === candidate.file_path
+        : requestedPath.startsWith(`${candidate.file_path}/`);
+    if (matches) {
+      page = candidate;
+      break;
+    }
+  }
+  if (!page && !requestedPath.endsWith("/")) {
+    for (const token of tokens) {
+      const folder = db
+        .prepare(
+          "SELECT p.file_path,p.kind,p.token,u.username FROM published_pages p JOIN users u ON u.id=p.user_id WHERE p.token=? AND u.username=? AND p.kind='folder' AND p.file_path=?",
+        )
+        .get(token, username, requestedPath) as PublishedPageRecord | undefined;
+      if (!folder) continue;
+      const tokenQuery = queryToken.success
+        ? `?token=${encodeURIComponent(queryToken.data)}`
+        : "";
+      return res.redirect(
+        302,
+        `/${encodeURIComponent(username)}/published/${encodedPublicPath(requestedPath)}/${tokenQuery}`,
+      );
+    }
+  }
+  if (!page) return res.status(404).send("Page not found");
+  if (queryToken.success)
+    res.cookie(`cloudink_published_${page.token.slice(0, 12)}`, page.token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 30 * 86400_000,
+      path: `/${encodeURIComponent(username)}/published/`,
+    });
+  const resource =
+    page.kind === "folder"
+      ? requestedPath.slice(page.file_path.length + 1)
+      : "";
+  const internalUrl = legacyPublishedResourceUrl(page, resource);
+  const isHtmlRequest =
+    /\.html?$/i.test(requestedPath) ||
+    (page.kind === "folder" && (!resource || resource.endsWith("/")));
+  if (!isHtmlRequest) return res.redirect(302, internalUrl);
+  res.set({
+    "Content-Security-Policy":
+      "default-src 'none'; frame-src 'self'; style-src 'unsafe-inline'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-cache",
+  });
+  return res.type("html").send(`<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Published page</title><style>html,body,iframe{width:100%;height:100%;margin:0;border:0;display:block}</style></head>
+<body><iframe src="${internalUrl}" sandbox="allow-scripts allow-forms allow-modals allow-popups" title="Published page"></iframe></body></html>`);
+});
+app.get(/^\/published\/([a-f0-9]{48})(?:\/(.*))?$/, (req, res) => {
+  const page = db
+    .prepare(
+      "SELECT p.file_path,p.kind,p.token,u.username FROM published_pages p JOIN users u ON u.id=p.user_id WHERE p.token=?",
+    )
+    .get(req.params[0]) as PublishedPageRecord | undefined;
+  if (!page) return res.status(404).send("Page not found");
+  if (page.kind === "file") {
+    if (req.params[1] !== "page.html")
+      return res.status(404).send("Page not found");
+    return servePublishedResource(page, "", res);
+  }
+  const publishedPath = req.params[1] || "";
+  const [folderName, ...resourceParts] = publishedPath.split("/");
+  if (folderName !== path.posix.basename(page.file_path))
+    return res.status(404).send("Page not found");
+  return servePublishedResource(page, resourceParts.join("/"), res);
+});
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
 function safeUploadFilename(originalName: string) {
   const original = path.basename(originalName).slice(0, 180);
@@ -64,9 +228,7 @@ const upload = multer({
       fs.mkdirSync(workspace, { recursive: true });
       try {
         const requestedDirectory =
-          typeof req.query.directory === "string"
-            ? req.query.directory
-            : "uploads";
+          typeof req.query.directory === "string" ? req.query.directory : "";
         const uploadDir = requestedDirectory
           ? resolveWorkspaceDirectory(workspace, requestedDirectory)
           : workspace;
@@ -316,6 +478,104 @@ app.get("/api/workspace/download", requireAuth, (req, res) => {
     return res.status(400).json({ error: (error as Error).message });
   }
 });
+app.get("/api/workspace/publications", requireAuth, (req, res) => {
+  const pages = db
+    .prepare(
+      "SELECT p.file_path,p.kind,p.token,p.created_at,p.updated_at,u.username FROM published_pages p JOIN users u ON u.id=p.user_id WHERE p.user_id=? ORDER BY p.updated_at DESC",
+    )
+    .all((req as AuthedRequest).userId) as Array<{
+    file_path: string;
+    kind: "file" | "folder";
+    token: string;
+    username: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+  return res.json({
+    pages: pages.map((page) => ({
+      ...page,
+      url: publicPageUrl(page),
+    })),
+  });
+});
+app.post("/api/workspace/publish", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  const payload = z
+    .object({
+      path: z.string().min(1),
+      kind: z.enum(["file", "folder"]).default("file"),
+    })
+    .safeParse(req.body);
+  if (
+    !payload.success ||
+    (payload.data.kind === "file" && !/\.html?$/i.test(payload.data.path))
+  )
+    return res.status(400).json({ error: "只能发布 HTML 文件或网站文件夹" });
+  try {
+    const absolutePath = resolveWorkspaceFile(workspace, payload.data.path);
+    const stat = fs.lstatSync(absolutePath);
+    if (
+      stat.isSymbolicLink() ||
+      (payload.data.kind === "file" && !stat.isFile()) ||
+      (payload.data.kind === "folder" && !stat.isDirectory())
+    )
+      throw new Error("发布类型与工作区条目不匹配");
+    if (payload.data.kind === "folder") {
+      const indexPath = path.join(absolutePath, "index.html");
+      const indexStat = fs.lstatSync(indexPath);
+      if (!indexStat.isFile() || indexStat.isSymbolicLink())
+        throw new Error("发布文件夹必须包含 index.html");
+    }
+    const userId = (req as AuthedRequest).userId;
+    const existing = db
+      .prepare(
+        "SELECT token,kind FROM published_pages WHERE user_id=? AND file_path=?",
+      )
+      .get(userId, payload.data.path) as
+      { token: string; kind: "file" | "folder" } | undefined;
+    const now = new Date().toISOString();
+    const token = existing?.token || crypto.randomBytes(24).toString("hex");
+    if (existing)
+      db.prepare(
+        "UPDATE published_pages SET kind=?,updated_at=? WHERE user_id=? AND file_path=?",
+      ).run(payload.data.kind, now, userId, payload.data.path);
+    else
+      db.prepare(
+        "INSERT INTO published_pages(id,token,user_id,file_path,kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+      ).run(
+        crypto.randomUUID(),
+        token,
+        userId,
+        payload.data.path,
+        payload.data.kind,
+        now,
+        now,
+      );
+    return res.status(existing ? 200 : 201).json({
+      path: payload.data.path,
+      kind: payload.data.kind,
+      url: publicPageUrl({
+        file_path: payload.data.path,
+        kind: payload.data.kind,
+        username: path.basename(workspace),
+        token,
+      }),
+    });
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
+});
+app.delete("/api/workspace/publish", requireAuth, (req, res) => {
+  const requestedPath = z.string().min(1).safeParse(req.query.path);
+  if (!requestedPath.success)
+    return res.status(400).json({ error: "文件路径无效" });
+  const result = db
+    .prepare("DELETE FROM published_pages WHERE user_id=? AND file_path=?")
+    .run((req as AuthedRequest).userId, requestedPath.data);
+  if (!result.changes) return res.status(404).json({ error: "页面尚未发布" });
+  return res.status(204).end();
+});
 app.post("/api/workspace/entry", requireAuth, (req, res) => {
   const workspace = userWorkspace(req);
   if (!workspace) return res.status(401).json({ error: "用户不存在" });
@@ -366,6 +626,27 @@ app.post("/api/workspace/rename", requireAuth, (req, res) => {
     const destination = resolveWorkspaceTarget(workspace, destinationPath);
     if (fs.existsSync(destination)) throw new Error("同名文件或目录已存在");
     fs.renameSync(source, destination);
+    const userId = (req as AuthedRequest).userId;
+    const publications = db
+      .prepare("SELECT id,file_path FROM published_pages WHERE user_id=?")
+      .all(userId) as Array<{ id: string; file_path: string }>;
+    const renamedPublications = publications.filter(
+      (page) =>
+        page.file_path === payload.data.path ||
+        (payload.data.kind === "folder" &&
+          page.file_path.startsWith(`${payload.data.path}/`)),
+    );
+    const updatePublication = db.prepare(
+      "UPDATE published_pages SET file_path=?,updated_at=? WHERE id=?",
+    );
+    const updatePublications = db.transaction(() => {
+      const now = new Date().toISOString();
+      for (const page of renamedPublications) {
+        const suffix = page.file_path.slice(payload.data.path.length);
+        updatePublication.run(`${destinationPath}${suffix}`, now, page.id);
+      }
+    });
+    updatePublications();
     return res.json({
       path: destinationPath,
       name: payload.data.name,
@@ -380,7 +661,25 @@ app.delete("/api/workspace/entry", requireAuth, (req, res) => {
   if (!workspace) return res.status(401).json({ error: "用户不存在" });
   try {
     const requestedPath = z.string().min(1).parse(req.query.path);
-    return res.json(removeWorkspaceEntry(workspace, requestedPath));
+    const removed = removeWorkspaceEntry(workspace, requestedPath);
+    const userId = (req as AuthedRequest).userId;
+    const publications = db
+      .prepare("SELECT id,file_path FROM published_pages WHERE user_id=?")
+      .all(userId) as Array<{ id: string; file_path: string }>;
+    const removePublication = db.prepare(
+      "DELETE FROM published_pages WHERE id=? AND user_id=?",
+    );
+    const removePublications = db.transaction(() => {
+      for (const page of publications)
+        if (
+          page.file_path === requestedPath ||
+          (removed.kind === "folder" &&
+            page.file_path.startsWith(`${requestedPath}/`))
+        )
+          removePublication.run(page.id, userId);
+    });
+    removePublications();
+    return res.json(removed);
   } catch (error) {
     return res.status(400).json({ error: (error as Error).message });
   }
@@ -469,7 +768,7 @@ app.get("/api/sessions", requireAuth, (req, res) =>
   res.json(
     db
       .prepare(
-        "SELECT id,title,created_at,updated_at FROM sessions WHERE user_id=? ORDER BY updated_at DESC",
+        "SELECT id,title,created_at,updated_at,favorite FROM sessions WHERE user_id=? ORDER BY favorite DESC,updated_at DESC",
       )
       .all((req as AuthedRequest).userId),
   ),
@@ -478,17 +777,26 @@ app.post("/api/sessions", requireAuth, (req, res) => {
   const id = crypto.randomUUID(),
     claude = crypto.randomUUID(),
     now = new Date().toISOString();
-  db.prepare("INSERT INTO sessions VALUES(?,?,?,?,?,?)").run(
+  db.prepare(
+    "INSERT INTO sessions(id,user_id,title,claude_session_id,created_at,updated_at,favorite) VALUES(?,?,?,?,?,?,0)",
+  ).run(id, (req as AuthedRequest).userId, "新对话", claude, now, now);
+  res.status(201).json({
     id,
-    (req as AuthedRequest).userId,
-    "新对话",
-    claude,
-    now,
-    now,
-  );
-  res
-    .status(201)
-    .json({ id, title: "新对话", created_at: now, updated_at: now });
+    title: "新对话",
+    created_at: now,
+    updated_at: now,
+    favorite: 0,
+  });
+});
+app.post("/api/sessions/:id/favorite", requireAuth, (req, res) => {
+  const payload = z.object({ favorite: z.boolean() }).safeParse(req.body);
+  if (!payload.success) return res.status(400).json({ error: "收藏状态无效" });
+  const favorite = payload.data.favorite ? 1 : 0;
+  const result = db
+    .prepare("UPDATE sessions SET favorite=? WHERE id=? AND user_id=?")
+    .run(favorite, req.params.id, (req as AuthedRequest).userId);
+  if (!result.changes) return res.status(404).json({ error: "会话不存在" });
+  return res.json({ id: req.params.id, favorite });
 });
 app.get("/api/sessions/:id/messages", requireAuth, (req, res) => {
   const uid = (req as AuthedRequest).userId;
@@ -518,7 +826,11 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
         .array(
           z.object({
             name: z.string().min(1).max(180),
-            path: z.string().regex(/^uploads\/[a-f0-9-]+-[a-zA-Z0-9._-]+$/),
+            path: z
+              .string()
+              // New chat uploads live at the workspace root. Keep accepting
+              // the legacy prefix for files uploaded before this change.
+              .regex(/^(?:uploads\/)?[a-f0-9-]+-[a-zA-Z0-9._-]+$/),
             size: z.number().nonnegative(),
           }),
         )

@@ -121,8 +121,11 @@
 - 桌面端 Sidebar 收起后必须保留 56px 图标轨道，轨道内提供展开、新对话、对话、文件及用户首字符入口；不得把桌面端展开按钮放入 Chat header。移动端继续使用完整侧栏抽屉，不应用图标轨道布局。
 - 产品品牌名通过 `.env` 的 `APP_NAME` 配置，默认值为 `CloudInk`；登录页、侧边栏和浏览器标题必须统一使用 `/api/public-config` 返回的品牌名，不得在前端写死。
 - Commands/Skills 菜单不得包含前端硬编码默认项，也不得复用后端缓存列表；每次打开菜单必须先清空旧项并展示扫描状态，只渲染当次 `/api/slash-items` 动态扫描返回的内容。
+- 会话收藏状态存储在 `sessions.favorite`，通过 `POST /api/sessions/:id/favorite` 更新；所有收藏和删除操作必须同时校验 `session id + 当前 user_id`。历史列表按收藏优先、更新时间倒序排列；前端收藏必须乐观更新、请求中锁定，失败时回滚并显示错误。
 - Cut/Copy 状态必须在源文件上可见；Paste 的目标目录来自右键位置，Cut 成功后必须同步已打开标签和 active path。同目录 Cut 是清除剪切状态的无操作，不能生成 `-copy-*` 文件。
 - 文件树外部拖放必须按落点解析上传目录：文件夹节点使用自身路径，文件使用父目录，空白使用根目录；子节点必须阻止 drop 继续冒泡到根目录，并显示当前目标目录。
+- `.html`/`.htm` 普通文件可单页发布；包含普通 `index.html` 的文件夹可发布为静态网站，并按原目录提供 HTML、CSS、JavaScript、图片和字体。单页公开地址为 `/<username>/published/<workspace-relative-page.html>?token=<48位token>`，文件夹首页必须为 `/<username>/published/<workspace-relative-folder>/?token=<48位token>` 并自动读取 `index.html`；缺少末尾斜杠时必须保留 token 重定向到规范地址。对外 HTML 必须是全屏 CSP 沙箱容器，并通过内部 token-in-path iframe 加载实际页面，使相对资源首次访问即可工作且用户 HTML 不能继承 Web UI 登录源权限；旧 token-in-path 地址继续兼容。
+- Vite 开发服务器必须忽略 `DATA_DIR` 和 `WORKSPACE_DIR` 中的运行时文件，用户或 Claude 编辑工作区时不得触发 Web UI 整页刷新。文件目录请求不得等待发布状态查询或 CodeMirror 模块；编辑器仅在文件标签 hover 时预取，或在目录完成首屏渲染后延迟预载。通用 API 只允许对幂等 GET 请求进行短暂网络重试，禁止自动重放写操作。
 
 ## 数据与安全边界
 
@@ -130,7 +133,7 @@
 - 登录状态使用 HttpOnly、SameSite Cookie。
 - 生产环境必须配置强随机 `JWT_SECRET` 和 HTTPS。
 - 上传支持点击选择、拖拽文件/图片及粘贴剪贴板截图；限制为最多 10 个文件、单文件 500 MB。改变限制时必须同步修改前端预检、Multer 配置、错误文案和 README。
-- 大文件必须由 Multer 直接流式写入当前用户的 `uploads` 目录，不得使用 `memoryStorage` 将整个文件缓存在 Node.js 堆中。
+- 大文件必须由 Multer 直接流式写入当前用户工作区根目录，不得使用 `memoryStorage` 将整个文件缓存在 Node.js 堆中。聊天区点击选择、拖拽和粘贴截图三种上传入口必须使用同一规则；文件树上传仍按落点目录写入。
 - `CLAUDE_ALLOWED_TOOLS=Bash` 只是 CLI 权限配置，不提供操作系统沙箱。
 - 不受信任的多用户部署需要容器或微虚拟机级隔离。
 

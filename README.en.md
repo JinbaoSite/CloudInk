@@ -46,7 +46,7 @@ CloudInk is a multi-user AI workspace built with React, Express, SQLite, and the
 - Four execution modes: `Auto`, `Plan`, `Manual`, and `Edit automatically`.
 - The `/` menu dynamically discovers Commands and Skills from Claude CLI, user configuration, plugins, and the workspace, including their real descriptions.
 - Use `@` to search for and reference files in the current user's workspace.
-- Upload attachments by selecting, dragging, or pasting screenshots. Each message supports up to 10 files, with a 500MB limit per file.
+- Upload attachments by selecting, dragging, or pasting screenshots. New attachments are saved directly in the current user's workspace root. Each message supports up to 10 files, with a 500MB limit per file.
 - Press `Enter` to send, or `Ctrl+Enter` / `Shift+Enter` to insert a line break.
 
 ### Sessions and workspace
@@ -54,12 +54,14 @@ CloudInk is a multi-user AI workspace built with React, Express, SQLite, and the
 - Register and sign in with email, username, and password; passwords are stored as bcrypt hashes.
 - Sessions, messages, attachments, and workspaces are isolated between users.
 - Session URLs use `/sessions/:sessionId` and support refresh recovery and History API navigation.
+- Conversation history supports pinning favorites, removing favorites, and deletion. Favorite state is persisted per user across refreshes and sign-ins.
 - A new conversation is added to history only after real content is sent.
 - The sidebar switches between chat history and files and supports resizing. On desktop, collapsing leaves a 56px icon rail that can expand the sidebar or switch directly to chats/files; mobile keeps the drawer behavior.
 - Clicking a file opens a VS Code-style center workspace. CodeMirror provides syntax highlighting, line numbers, bracket matching, folding, and completion based on file type. Multiple tabs, unsaved-state indicators, tab closing, button save, and `Ctrl/Cmd+S` are supported. The workspace collapses automatically when no file is open.
 - On first opening the workspace on desktop, Sidebar, Workspace, and Chat use a `15% / 60% / 25%` width split. The dividers remain draggable, and double-clicking one restores its default ratio. File context menus support Open, Rename, Delete, Cut, Copy, Paste, Download, and New File. Deleting a folder recursively removes all descendants and closes editor tabs from that directory.
 - Rename, New File, and New Folder use inline editors with visible save/cancel controls, `Enter` to confirm, and `Esc` to cancel. Rename has an independent state and endpoint; failures preserve the entered name and appear inline.
 - Cut/Copy state is visible on the source file. Paste refreshes the tree and Cut updates open-tab paths. Dropping external files onto a folder uploads to that folder; dropping onto a file uses its parent; dropping onto empty space uses the workspace root.
+- HTML files can be published as public webpages from the context menu. A folder containing `index.html` can also be published as a complete static site; HTML, CSS, JavaScript, images, and fonts remain available at their original relative paths. Single pages use `/<username>/published/<page.html>?token=<token>`, while folder homepages use `/<username>/published/<folder>/?token=<token>` without exposing `index.html` in the URL. Published pages can be opened, copied, or unpublished and run in a browser sandbox isolated from the signed-in UI.
 - The effective Claude working directory is `<WORKSPACE_DIR>/<username>`.
 
 ### Responsive experience
@@ -176,14 +178,16 @@ data/
 ├── app.db-wal
 └── workspaces/
     └── <username>/
-        └── uploads/
+        └── <uploaded-files>
 ```
 
 The database relationship is `users → sessions → messages`. Every session and message query validates the current user. Each web session also maps to an independent Claude CLI session ID: the first turn uses `--session-id`, and later turns use `--resume`.
 
 When `CLAUDE_MODEL` is unset, startup performs a lightweight probe without tools or session persistence and reads the actual model from the Claude CLI initialization event. If the probe fails or times out, the UI shows `CLI default`; normal conversations still update the model from runtime events.
 
-The workspace editor reads files through `GET /api/workspace/file?path=...` and saves with `PUT /api/workspace/file`. File management uses `/api/workspace/entry`, `/api/workspace/rename`, `/api/workspace/paste`, and `/api/workspace/download`. These endpoints accept only paths within the current user's workspace. Online editing is limited to 5MB; attachment and file-tree uploads allow up to 500MB per file.
+The workspace editor reads files through `GET /api/workspace/file?path=...` and saves with `PUT /api/workspace/file`. File management uses `/api/workspace/entry`, `/api/workspace/rename`, `/api/workspace/paste`, and `/api/workspace/download`. These endpoints accept only paths within the current user's workspace. Online editing is limited to 5MB. Chat attachments are written directly to the workspace root, while file-tree uploads use the selected drop target; both allow up to 500MB per file.
+
+Web publishing is managed through `/api/workspace/publications` and `/api/workspace/publish`. A single HTML file uses `/:username/published/:pagePath?token=:token`; a folder site uses `/:username/published/:folderPath/?token=:token`, with the server loading its root `index.html` automatically. A missing trailing slash preserves the token and redirects to the canonical directory URL so relative resources resolve correctly. A full-screen sandbox wrapper loads an internal token-bearing resource path, so local references and page navigation do not need to repeat the query token.
 
 ## Streaming events
 
