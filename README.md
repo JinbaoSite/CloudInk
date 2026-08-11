@@ -110,8 +110,8 @@ claude
 ### 安装与启动
 
 ```bash
-git clone https://github.com/JinbaoSite/claude-code-ui.git
-cd claude-code-ui
+git clone https://github.com/JinbaoSite/CloudInk.git
+cd CloudInk
 npm install
 cp .env.example .env
 npm run dev

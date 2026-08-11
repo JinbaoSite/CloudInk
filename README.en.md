@@ -111,8 +111,8 @@ claude
 ### Install and run
 
 ```bash
-git clone https://github.com/JinbaoSite/claude-code-ui.git
-cd claude-code-ui
+git clone https://github.com/JinbaoSite/CloudInk.git
+cd CloudInk
 npm install
 cp .env.example .env
 npm run dev
