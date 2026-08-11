@@ -46,6 +46,7 @@ CloudInk is a multi-user AI workspace built with React, Express, SQLite, and the
 - Four execution modes: `Auto`, `Plan`, `Manual`, and `Edit automatically`.
 - The `/` menu dynamically discovers Commands and Skills from Claude CLI, user configuration, plugins, and the workspace, including their real descriptions.
 - Use `@` to search for and reference files in the current user's workspace.
+- The `/` and `@` suggestion menus support cyclic Up/Down selection, `Enter` to confirm, and `Esc` to close; the active item scrolls into view automatically.
 - Upload attachments by selecting, dragging, or pasting screenshots. New attachments are saved directly in the current user's workspace root. Each message supports up to 10 files, with a 500MB limit per file.
 - Press `Enter` to send, or `Ctrl+Enter` / `Shift+Enter` to insert a line break.
 

@@ -46,6 +46,7 @@ CloudInk 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用�
 - `Auto`、`Plan`、`Manual`、`Edit automatically` 四种执行模式。
 - `/` 菜单动态读取 Claude CLI、用户配置、插件和工作区中的 Commands/Skills 及真实 description。
 - `@` 搜索并引用当前用户工作区文件。
+- `/` 和 `@` 候选菜单支持方向键上下循环选择、`Enter` 确认及 `Esc` 关闭，当前项会自动滚动到可见区域。
 - 点击、拖拽或粘贴剪贴板截图上传附件；新附件直接保存到当前用户的工作区根目录，每条消息最多 10 个文件，单文件最大 500MB。
 - 普通 `Enter` 发送，`Ctrl+Enter` 或 `Shift+Enter` 换行。
 

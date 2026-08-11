@@ -385,6 +385,8 @@ function App() {
     [savingWorkspacePath, setSavingWorkspacePath] = useState(""),
     [showMentionMenu, setShowMentionMenu] = useState(false),
     [showSlashMenu, setShowSlashMenu] = useState(false),
+    [slashSelectedIndex, setSlashSelectedIndex] = useState(0),
+    [mentionSelectedIndex, setMentionSelectedIndex] = useState(0),
     [dynamicCommands, setDynamicCommands] = useState<SlashItem[]>([]),
     [dynamicSkills, setDynamicSkills] = useState<SlashItem[]>([]),
     [slashItemsLoading, setSlashItemsLoading] = useState(false),
@@ -464,6 +466,7 @@ function App() {
   const filteredSkills = dynamicSkills.filter((skill) =>
     skill.name.startsWith(slashQuery),
   );
+  const slashMenuItems = [...filteredCommands, ...filteredSkills];
   const activeMode =
     executionModes.find((option) => option.value === mode) || executionModes[0];
   const load = () => api("/sessions").then(setSessions);
@@ -623,6 +626,26 @@ function App() {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [showSlashMenu]);
+  useEffect(() => {
+    setSlashSelectedIndex(0);
+  }, [slashQuery, showSlashMenu, dynamicCommands, dynamicSkills]);
+  useEffect(() => {
+    setMentionSelectedIndex(0);
+  }, [mentionQuery, showMentionMenu, workspaceFiles]);
+  useEffect(() => {
+    if (!showSlashMenu) return;
+    slashMenuRef.current
+      ?.querySelector<HTMLElement>(`[data-menu-index="${slashSelectedIndex}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [showSlashMenu, slashSelectedIndex]);
+  useEffect(() => {
+    if (!showMentionMenu) return;
+    document
+      .querySelector<HTMLElement>(
+        `.mention-menu [data-menu-index="${mentionSelectedIndex}"]`,
+      )
+      ?.scrollIntoView({ block: "nearest" });
+  }, [showMentionMenu, mentionSelectedIndex]);
   useEffect(() => {
     if (!active || !me) return;
     setPendingQuestion(null);
@@ -2051,17 +2074,31 @@ function App() {
             </div>
           )}
           {showSlashMenu && (
-            <div className="slash-menu" ref={slashMenuRef}>
+            <div
+              className="slash-menu"
+              ref={slashMenuRef}
+              role="listbox"
+              id="composer-slash-menu"
+              aria-label="Commands 和 Skills"
+            >
               {filteredCommands.length > 0 && (
                 <div className="slash-menu-heading">
                   <span>Commands</span>
                   <small>管理当前会话和上下文</small>
                 </div>
               )}
-              {filteredCommands.map((command) => (
+              {filteredCommands.map((command, index) => (
                 <button
                   type="button"
+                  role="option"
+                  id={`slash-option-${index}`}
+                  aria-selected={slashSelectedIndex === index}
+                  data-menu-index={index}
+                  className={
+                    slashSelectedIndex === index ? "keyboard-active" : ""
+                  }
                   key={command.name}
+                  onMouseEnter={() => setSlashSelectedIndex(index)}
                   onClick={() => insertSlashCommand(command.name)}
                 >
                   <code>{command.name}</code>
@@ -2074,16 +2111,27 @@ function App() {
                   <small>调用专业工作流</small>
                 </div>
               )}
-              {filteredSkills.map((skill) => (
-                <button
-                  type="button"
-                  key={skill.name}
-                  onClick={() => insertSlashCommand(skill.name)}
-                >
-                  <code>{skill.name}</code>
-                  <span>{skill.description}</span>
-                </button>
-              ))}
+              {filteredSkills.map((skill, index) => {
+                const menuIndex = filteredCommands.length + index;
+                return (
+                  <button
+                    type="button"
+                    role="option"
+                    id={`slash-option-${menuIndex}`}
+                    aria-selected={slashSelectedIndex === menuIndex}
+                    data-menu-index={menuIndex}
+                    className={
+                      slashSelectedIndex === menuIndex ? "keyboard-active" : ""
+                    }
+                    key={skill.name}
+                    onMouseEnter={() => setSlashSelectedIndex(menuIndex)}
+                    onClick={() => insertSlashCommand(skill.name)}
+                  >
+                    <code>{skill.name}</code>
+                    <span>{skill.description}</span>
+                  </button>
+                );
+              })}
               {!filteredCommands.length && !filteredSkills.length && (
                 <div className="slash-empty">
                   {slashItemsLoading
@@ -2101,7 +2149,12 @@ function App() {
             </div>
           )}
           {showMentionMenu && (
-            <div className="mention-menu">
+            <div
+              className="mention-menu"
+              role="listbox"
+              id="composer-mention-menu"
+              aria-label="工作区文件"
+            >
               <div className="mention-menu-heading">
                 <span>工作区文件</span>
                 <small>输入文件名或路径进行搜索</small>
@@ -2109,11 +2162,19 @@ function App() {
               {workspaceFilesLoading ? (
                 <div className="mention-empty">正在读取工作区…</div>
               ) : filteredWorkspaceFiles.length ? (
-                filteredWorkspaceFiles.map((file) => (
+                filteredWorkspaceFiles.map((file, index) => (
                   <button
                     type="button"
+                    role="option"
+                    id={`mention-option-${index}`}
+                    aria-selected={mentionSelectedIndex === index}
+                    data-menu-index={index}
+                    className={
+                      mentionSelectedIndex === index ? "keyboard-active" : ""
+                    }
                     key={file.path}
                     title={file.path}
+                    onMouseEnter={() => setMentionSelectedIndex(index)}
                     onClick={() => insertFileMention(file)}
                   >
                     <span className="mention-file-icon" aria-hidden="true">
@@ -2166,6 +2227,48 @@ function App() {
                 if (hasMention) setShowSlashMenu(false);
               }}
               onKeyDown={(e) => {
+                const menuItems = showSlashMenu
+                  ? slashMenuItems
+                  : showMentionMenu
+                    ? filteredWorkspaceFiles
+                    : [];
+                if (
+                  (showSlashMenu || showMentionMenu) &&
+                  (e.key === "ArrowDown" || e.key === "ArrowUp")
+                ) {
+                  e.preventDefault();
+                  if (!menuItems.length) return;
+                  const direction = e.key === "ArrowDown" ? 1 : -1;
+                  if (showSlashMenu)
+                    setSlashSelectedIndex(
+                      (current) =>
+                        (current + direction + menuItems.length) %
+                        menuItems.length,
+                    );
+                  else
+                    setMentionSelectedIndex(
+                      (current) =>
+                        (current + direction + menuItems.length) %
+                        menuItems.length,
+                    );
+                  return;
+                }
+                if (
+                  e.key === "Enter" &&
+                  !e.nativeEvent.isComposing &&
+                  (showSlashMenu || showMentionMenu)
+                ) {
+                  e.preventDefault();
+                  if (!menuItems.length) return;
+                  if (showSlashMenu) {
+                    const item = slashMenuItems[slashSelectedIndex];
+                    if (item) insertSlashCommand(item.name);
+                  } else {
+                    const file = filteredWorkspaceFiles[mentionSelectedIndex];
+                    if (file) insertFileMention(file);
+                  }
+                  return;
+                }
                 if (e.key === "Escape" && (showSlashMenu || showMentionMenu)) {
                   e.preventDefault();
                   setShowSlashMenu(false);

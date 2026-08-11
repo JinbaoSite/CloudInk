@@ -519,7 +519,8 @@
   text-align: left;
 }
 
-.mention-menu > button:hover {
+.mention-menu > button:hover,
+.mention-menu > button.keyboard-active {
   background: #f1efe9;
 }
 
@@ -612,7 +613,8 @@
   text-align: left;
 }
 
-.slash-menu > button:hover {
+.slash-menu > button:hover,
+.slash-menu > button.keyboard-active {
   background: #f1efe9;
 }
 .slash-menu > button code {
