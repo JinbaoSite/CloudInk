@@ -36,13 +36,6 @@ import {
 const app = express();
 const appName = process.env.APP_NAME?.trim().slice(0, 60) || "CloudInk";
 const detectedModel = detectClaudeModel(process.cwd());
-const slashCapabilityCache = new Map<
-  string,
-  {
-    expiresAt: number;
-    value: Awaited<ReturnType<typeof detectClaudeCapabilities>>;
-  }
->();
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
 app.get("/api/public-config", (_req, res) => res.json({ appName }));
@@ -186,15 +179,7 @@ app.get("/api/slash-items", requireAuth, async (req, res) => {
   if (!user) return res.status(401).json({ error: "用户不存在" });
   const workspace = path.join(workspaceRoot, user.username);
   fs.mkdirSync(workspace, { recursive: true });
-  const cached = slashCapabilityCache.get(workspace);
-  const capabilities =
-    cached && cached.expiresAt > Date.now()
-      ? cached.value
-      : await detectClaudeCapabilities(workspace);
-  slashCapabilityCache.set(workspace, {
-    expiresAt: Date.now() + 10_000,
-    value: capabilities,
-  });
+  const capabilities = await detectClaudeCapabilities(workspace);
   const skillNames = new Set(capabilities.skills);
   const descriptions = discoverSlashDescriptions(workspace);
   const item = (name: string, kind: "command" | "skill") => ({

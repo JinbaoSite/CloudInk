@@ -10,6 +10,8 @@ import { createRoot } from "react-dom/client";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faBox,
+  faAnglesLeft,
+  faAnglesRight,
   faCheck,
   faBars,
   faComments,
@@ -34,7 +36,6 @@ import {
   faRotateRight,
   faSliders,
   faTerminal,
-  faTableColumns,
   faWandMagicSparkles,
   faXmark,
   faHand,
@@ -145,21 +146,8 @@ const executionModes: Array<{
     description: "自动接受文件编辑",
   },
 ];
-const slashCommands = [
-  { name: "/compact", description: "压缩当前对话上下文" },
-  { name: "/context", description: "查看上下文和 Token 使用情况" },
-  { name: "/doctor", description: "检查智能代理配置与运行环境" },
-  { name: "/review", description: "审查当前工作区的代码变更" },
-  { name: "/security-review", description: "检查代码中的安全风险" },
-];
-const slashSkills = [
-  { name: "/debug", description: "分析问题根因并修复代码" },
-  { name: "/code-review", description: "对代码进行系统性质量审查" },
-  { name: "/simplify", description: "简化结构并提升代码可读性" },
-  { name: "/verify", description: "验证实现和完整业务流程" },
-  { name: "/deep-research", description: "执行多步骤深度研究" },
-];
 type SlashItem = { name: string; description: string };
+const DESKTOP_SIDEBAR_RAIL_WIDTH = 56;
 function localId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -358,9 +346,8 @@ function App() {
     [savingWorkspacePath, setSavingWorkspacePath] = useState(""),
     [showMentionMenu, setShowMentionMenu] = useState(false),
     [showSlashMenu, setShowSlashMenu] = useState(false),
-    [dynamicCommands, setDynamicCommands] =
-      useState<SlashItem[]>(slashCommands),
-    [dynamicSkills, setDynamicSkills] = useState<SlashItem[]>(slashSkills),
+    [dynamicCommands, setDynamicCommands] = useState<SlashItem[]>([]),
+    [dynamicSkills, setDynamicSkills] = useState<SlashItem[]>([]),
     [slashItemsLoading, setSlashItemsLoading] = useState(false),
     [showModeMenu, setShowModeMenu] = useState(false),
     [sidebarView, setSidebarView] = useState<"sessions" | "files">("sessions"),
@@ -422,6 +409,7 @@ function App() {
   const resizingSidebarRef = useRef(false);
   const resizingWorkspaceRef = useRef(false);
   const fileDragDepthRef = useRef(0);
+  const slashItemsRequestRef = useRef(0);
   const slashMatch = input.match(/(?:^|\s)(\/[^\s]*)$/);
   const slashQuery = slashMatch?.[1].toLowerCase() || "";
   const mentionMatch = input.match(/(?:^|\s)@([^\s@]*)$/);
@@ -439,19 +427,24 @@ function App() {
     executionModes.find((option) => option.value === mode) || executionModes[0];
   const load = () => api("/sessions").then(setSessions);
   async function refreshSlashItems() {
-    if (slashItemsLoading) return;
+    const requestId = ++slashItemsRequestRef.current;
+    setDynamicCommands([]);
+    setDynamicSkills([]);
     setSlashItemsLoading(true);
     try {
       const result = (await api("/slash-items")) as {
         commands: SlashItem[];
         skills: SlashItem[];
       };
+      if (requestId !== slashItemsRequestRef.current) return;
       setDynamicCommands(result.commands);
       setDynamicSkills(result.skills);
     } catch (loadError) {
+      if (requestId !== slashItemsRequestRef.current) return;
       setError((loadError as Error).message);
     } finally {
-      setSlashItemsLoading(false);
+      if (requestId === slashItemsRequestRef.current)
+        setSlashItemsLoading(false);
     }
   }
   function navigateToSession(id: string, replace = false) {
@@ -767,6 +760,7 @@ function App() {
   }
   function showWorkspaceFiles() {
     setSidebarView("files");
+    setSidebarCollapsed(false);
     void loadWorkspaceFiles();
   }
   async function refreshWorkspaceFiles() {
@@ -1282,15 +1276,22 @@ function App() {
       )}
       <aside className={mobileSessionsOpen ? "mobile-open" : ""}>
         <div className="sidebar-heading">
-          <div className="brand">✦ {appName}</div>
+          <div className="brand sidebar-brand" title={appName}>
+            <span className="sidebar-brand-mark" aria-hidden="true">
+              ✦
+            </span>
+            <span className="sidebar-brand-name">{appName}</span>
+          </div>
           <button
             type="button"
             className="sidebar-collapse"
-            title="收起侧边栏"
-            aria-label="收起侧边栏"
-            onClick={() => setSidebarCollapsed(true)}
+            title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
           >
-            <FontAwesomeIcon icon={faTableColumns} />
+            <FontAwesomeIcon
+              icon={sidebarCollapsed ? faAnglesRight : faAnglesLeft}
+            />
           </button>
           <button
             type="button"
@@ -1301,11 +1302,11 @@ function App() {
             <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
-        <button className="new" onClick={create}>
+        <button className="new" title="新对话" onClick={create}>
           <span className="new-icon" aria-hidden="true">
             +
           </span>
-          <span>新对话</span>
+          <span className="new-label">新对话</span>
         </button>
         <div className="sidebar-tabs" role="tablist" aria-label="侧栏内容">
           <button
@@ -1313,18 +1314,25 @@ function App() {
             role="tab"
             aria-selected={sidebarView === "sessions"}
             className={sidebarView === "sessions" ? "active" : ""}
-            onClick={() => setSidebarView("sessions")}
+            title="对话"
+            onClick={() => {
+              setSidebarView("sessions");
+              setSidebarCollapsed(false);
+            }}
           >
-            <FontAwesomeIcon icon={faComments} aria-hidden="true" /> 对话
+            <FontAwesomeIcon icon={faComments} aria-hidden="true" />
+            <span className="sidebar-tab-label">对话</span>
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={sidebarView === "files"}
             className={sidebarView === "files" ? "active" : ""}
+            title="文件"
             onClick={showWorkspaceFiles}
           >
-            <FontAwesomeIcon icon={faFolderTree} aria-hidden="true" /> 文件
+            <FontAwesomeIcon icon={faFolderTree} aria-hidden="true" />
+            <span className="sidebar-tab-label">文件</span>
           </button>
         </div>
         {sidebarView === "sessions" ? (
@@ -1612,7 +1620,9 @@ function App() {
           }}
           onPointerMove={(event) => {
             if (!resizingWorkspaceRef.current) return;
-            const sidebarOffset = sidebarCollapsed ? 0 : sidebarWidth;
+            const sidebarOffset = sidebarCollapsed
+              ? DESKTOP_SIDEBAR_RAIL_WIDTH
+              : sidebarWidth;
             setWorkspaceWidth(
               Math.max(
                 360,
@@ -1648,17 +1658,6 @@ function App() {
           >
             <FontAwesomeIcon icon={faBars} />
           </button>
-          {sidebarCollapsed && (
-            <button
-              type="button"
-              className="desktop-sidebar-open"
-              title="展开侧边栏"
-              aria-label="展开侧边栏"
-              onClick={() => setSidebarCollapsed(false)}
-            >
-              <FontAwesomeIcon icon={faTableColumns} />
-            </button>
-          )}
           <div className="chat-heading">
             {sessions.find((s) => s.id === active)?.title || "新对话"}
           </div>
@@ -1994,7 +1993,7 @@ function App() {
                 setShowSlashMenu(hasSlash);
                 setShowMentionMenu(hasMention);
                 if (hasMention) void loadWorkspaceFiles();
-                if (hasSlash) void refreshSlashItems();
+                if (hasSlash && !showSlashMenu) void refreshSlashItems();
                 if (hasSlash || hasMention) setShowModeMenu(false);
                 if (hasSlash) setShowMentionMenu(false);
                 if (hasMention) setShowSlashMenu(false);

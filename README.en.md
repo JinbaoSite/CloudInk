@@ -55,7 +55,7 @@ CloudInk is a multi-user AI workspace built with React, Express, SQLite, and the
 - Sessions, messages, attachments, and workspaces are isolated between users.
 - Session URLs use `/sessions/:sessionId` and support refresh recovery and History API navigation.
 - A new conversation is added to history only after real content is sent.
-- The sidebar switches between chat history and files, and supports resizing, collapsing, and reopening.
+- The sidebar switches between chat history and files and supports resizing. On desktop, collapsing leaves a 56px icon rail that can expand the sidebar or switch directly to chats/files; mobile keeps the drawer behavior.
 - Clicking a file opens a VS Code-style center workspace. CodeMirror provides syntax highlighting, line numbers, bracket matching, folding, and completion based on file type. Multiple tabs, unsaved-state indicators, tab closing, button save, and `Ctrl/Cmd+S` are supported. The workspace collapses automatically when no file is open.
 - On first opening the workspace on desktop, Sidebar, Workspace, and Chat use a `15% / 60% / 25%` width split. The dividers remain draggable, and double-clicking one restores its default ratio. File context menus support Open, Rename, Delete, Cut, Copy, Paste, Download, and New File. Deleting a folder recursively removes all descendants and closes editor tabs from that directory.
 - Rename, New File, and New Folder use inline editors with visible save/cancel controls, `Enter` to confirm, and `Esc` to cancel. Rename has an independent state and endpoint; failures preserve the entered name and appear inline.
