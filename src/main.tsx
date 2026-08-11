@@ -27,6 +27,11 @@ import {
   faFileZipper,
   faFolder,
   faFolderTree,
+  faEnvelope,
+  faUser,
+  faUsers,
+  faRightFromBracket,
+  faChevronUp,
   faCloudArrowUp,
   faGear,
   faKey,
@@ -55,6 +60,7 @@ type Session = {
   title: string;
   updated_at: string;
   favorite: 0 | 1;
+  username: string;
 };
 type Activity = {
   kind: "status" | "thinking" | "narration" | "tool" | "tool_result";
@@ -114,6 +120,22 @@ type ClaudeQuestion = {
   options?: QuestionOption[];
 };
 type PendingQuestion = { toolUseId: string; questions: ClaudeQuestion[] };
+type PendingRegistration = {
+  id: string;
+  username: string;
+  email: string;
+  created_at: string;
+  approval_status: "pending" | "approved" | "rejected";
+  reviewed_at: string | null;
+};
+type AdminUser = {
+  id: string;
+  username: string;
+  email: string;
+  created_at: string;
+  approved: 0 | 1;
+  approval_status: "pending" | "approved" | "rejected" | null;
+};
 type FileTreeNode = {
   name: string;
   path: string;
@@ -284,16 +306,31 @@ function Login({ onDone, appName }: { onDone: () => void; appName: string }) {
   const [register, setRegister] = useState(false),
     [username, setUsername] = useState(""),
     [email, setEmail] = useState(""),
+    [loginIdentifier, setLoginIdentifier] = useState(""),
     [password, setPassword] = useState(""),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState("");
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setNotice("");
     try {
-      await api("/auth/" + (register ? "register" : "login"), {
+      const result = await api("/auth/" + (register ? "register" : "login"), {
         method: "POST",
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify(
+          register
+            ? { username, email, password }
+            : { identifier: loginIdentifier, password },
+        ),
       });
+      if (register && result?.pending) {
+        setNotice(result.message || "注册申请已提交，请等待管理员审批");
+        setRegister(false);
+        setUsername("");
+        setEmail("");
+        setPassword("");
+        return;
+      }
       onDone();
     } catch (e) {
       setError((e as Error).message);
@@ -314,36 +351,56 @@ function Login({ onDone, appName }: { onDone: () => void; appName: string }) {
               pattern="[a-z0-9][a-z0-9_-]*"
               minLength={2}
               maxLength={32}
-              placeholder="例如 jinbao"
               required
             />
           </label>
         )}
-        <label>
-          邮箱
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </label>
+        {register ? (
+          <label>
+            邮箱
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
+          </label>
+        ) : (
+          <label>
+            用户名或邮箱
+            <input
+              type="text"
+              value={loginIdentifier}
+              onChange={(e) => setLoginIdentifier(e.target.value)}
+              autoComplete="username"
+              placeholder="输入用户名或邮箱"
+              required
+            />
+          </label>
+        )}
         <label>
           密码
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            autoComplete={register ? "new-password" : "current-password"}
             minLength={6}
             required
           />
         </label>
         {error && <div className="error">{error}</div>}
-        <button>{register ? "注册并登录" : "登录"}</button>
+        {notice && <div className="login-notice">{notice}</div>}
+        <button>{register ? "提交注册申请" : "登录"}</button>
         <button
           type="button"
           className="link"
-          onClick={() => setRegister(!register)}
+          onClick={() => {
+            setRegister(!register);
+            setError("");
+            setNotice("");
+          }}
         >
           {register ? "已有账号？登录" : "没有账号？注册"}
         </button>
@@ -363,7 +420,14 @@ function App() {
       : defaultSidebarWidth();
   };
   const [me, setMe] = useState<
-      { email: string; username: string } | null | undefined
+      | {
+          email: string;
+          username: string;
+          created_at: string;
+          isRoot: boolean;
+        }
+      | null
+      | undefined
     >(),
     [appName, setAppName] = useState("CloudInk"),
     [sessions, setSessions] = useState<Session[]>([]),
@@ -431,6 +495,23 @@ function App() {
     >({}),
     [copiedMessageId, setCopiedMessageId] = useState(""),
     [favoriteUpdatingId, setFavoriteUpdatingId] = useState(""),
+    [expandedRootUsers, setExpandedRootUsers] = useState<Set<string>>(
+      new Set(),
+    ),
+    [pendingRegistrations, setPendingRegistrations] = useState<
+      PendingRegistration[]
+    >([]),
+    [showApprovalPanel, setShowApprovalPanel] = useState(false),
+    [accountMenuOpen, setAccountMenuOpen] = useState(false),
+    [accountPanel, setAccountPanel] = useState<
+      "profile" | "users" | "password" | null
+    >(null),
+    [adminUsers, setAdminUsers] = useState<AdminUser[]>([]),
+    [selectedAdminUserId, setSelectedAdminUserId] = useState(""),
+    [newPassword, setNewPassword] = useState(""),
+    [passwordSaving, setPasswordSaving] = useState(false),
+    [accountNotice, setAccountNotice] = useState(""),
+    [approvalUpdatingId, setApprovalUpdatingId] = useState(""),
     [mobileSessionsOpen, setMobileSessionsOpen] = useState(false),
     [uploading, setUploading] = useState(false),
     [draggingFiles, setDraggingFiles] = useState(false),
@@ -445,6 +526,11 @@ function App() {
   const modeButtonRef = useRef<HTMLButtonElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const slashButtonRef = useRef<HTMLButtonElement>(null);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+  const accountTriggerRef = useRef<HTMLButtonElement>(null);
+  const accountPanelRef = useRef<HTMLElement>(null);
+  const approvalPanelRef = useRef<HTMLElement>(null);
+  const adminUserPopoverRef = useRef<HTMLElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
   const skipMessageLoadForRef = useRef("");
@@ -469,7 +555,67 @@ function App() {
   const slashMenuItems = [...filteredCommands, ...filteredSkills];
   const activeMode =
     executionModes.find((option) => option.value === mode) || executionModes[0];
+  const activeSession = sessions.find((session) => session.id === active);
+  const viewingForeignSession = Boolean(
+    me?.isRoot && activeSession && activeSession.username !== me.username,
+  );
+  const pendingRegistrationCount = pendingRegistrations.filter(
+    (registration) => registration.approval_status === "pending",
+  ).length;
   const load = () => api("/sessions").then(setSessions);
+  async function refreshPendingRegistrations() {
+    const result = (await api("/admin/registrations")) as {
+      users: PendingRegistration[];
+    };
+    setPendingRegistrations(result.users || []);
+  }
+  async function openAccountPanel(panel: "profile" | "users" | "password") {
+    setAccountMenuOpen(false);
+    setShowApprovalPanel(false);
+    setSelectedAdminUserId("");
+    setAccountPanel(panel);
+    setAccountNotice("");
+    if (panel === "users") {
+      const result = (await api("/admin/users")) as { users: AdminUser[] };
+      setAdminUsers(result.users || []);
+    }
+  }
+  async function changePassword(event: React.FormEvent) {
+    event.preventDefault();
+    setAccountNotice("");
+    setPasswordSaving(true);
+    try {
+      await api("/me/password", {
+        method: "POST",
+        body: JSON.stringify({ newPassword }),
+      });
+      setNewPassword("");
+      setAccountNotice("密码修改成功");
+    } catch (passwordError) {
+      setAccountNotice((passwordError as Error).message);
+    } finally {
+      setPasswordSaving(false);
+    }
+  }
+  async function reviewRegistration(id: string, approve: boolean) {
+    if (approvalUpdatingId) return;
+    setApprovalUpdatingId(id);
+    setError("");
+    try {
+      await api(`/admin/registrations/${id}${approve ? "/approve" : ""}`, {
+        method: approve ? "POST" : "DELETE",
+      });
+      await refreshPendingRegistrations();
+      if (approve) {
+        setWorkspaceFilesLoaded(false);
+        if (sidebarView === "files") void loadWorkspaceFiles(true);
+      }
+    } catch (reviewError) {
+      setError((reviewError as Error).message);
+    } finally {
+      setApprovalUpdatingId("");
+    }
+  }
   async function toggleSessionFavorite(session: Session) {
     if (favoriteUpdatingId) return;
     const favorite: 0 | 1 = session.favorite ? 0 : 1;
@@ -542,6 +688,37 @@ function App() {
   useEffect(() => {
     document.title = appName;
   }, [appName]);
+  useEffect(() => {
+    if (!accountMenuOpen && !accountPanel && !showApprovalPanel) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        accountMenuRef.current?.contains(target) ||
+        accountTriggerRef.current?.contains(target) ||
+        accountPanelRef.current?.contains(target) ||
+        approvalPanelRef.current?.contains(target) ||
+        adminUserPopoverRef.current?.contains(target)
+      )
+        return;
+      setAccountMenuOpen(false);
+      setAccountPanel(null);
+      setShowApprovalPanel(false);
+      setSelectedAdminUserId("");
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [accountMenuOpen, accountPanel, showApprovalPanel]);
+  useEffect(() => {
+    if (!me?.isRoot) return;
+    const refresh = () =>
+      void refreshPendingRegistrations().catch(() => undefined);
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [me?.isRoot]);
   useEffect(() => {
     localStorage.setItem("claude-ui-sidebar-width", String(sidebarWidth));
   }, [sidebarWidth]);
@@ -807,7 +984,7 @@ function App() {
     }
   }
   function retryResponse(messageIndex: number) {
-    if (busy) return;
+    if (busy || viewingForeignSession) return;
     const userMessage = messages
       .slice(0, messageIndex)
       .reverse()
@@ -1225,6 +1402,10 @@ function App() {
   }
   async function send(e: React.FormEvent) {
     e.preventDefault();
+    if (viewingForeignSession) {
+      setError("其他用户的历史会话为只读模式");
+      return;
+    }
     if ((!input.trim() && !attachments.length) || busy || uploading) return;
     let id = active;
     if (!id) {
@@ -1417,6 +1598,71 @@ function App() {
     : null;
   const userInitial =
     Array.from(me.username.trim())[0]?.toLocaleUpperCase() || "U";
+  const sessionGroups = Array.from(
+    sessions.reduce((groups, session) => {
+      const entries = groups.get(session.username) || [];
+      entries.push(session);
+      groups.set(session.username, entries);
+      return groups;
+    }, new Map<string, Session[]>()),
+  );
+  const renderSession = (session: Session) => {
+    const owned = session.username === me.username;
+    return (
+      <div
+        className={"session " + (session.id === active ? "active" : "")}
+        key={session.id}
+      >
+        <a
+          className="session-link"
+          href={`/sessions/${encodeURIComponent(session.id)}`}
+          onClick={(event) => {
+            event.preventDefault();
+            autoScrollRef.current = true;
+            navigateToSession(session.id);
+            setMobileSessionsOpen(false);
+          }}
+        >
+          {session.title}
+        </a>
+        {owned && (
+          <span className="session-actions">
+            <button
+              type="button"
+              className={`session-action favorite${session.favorite ? " active" : ""}`}
+              aria-label={`${session.favorite ? "取消收藏" : "收藏"} ${session.title}`}
+              aria-pressed={Boolean(session.favorite)}
+              title={session.favorite ? "取消收藏" : "收藏"}
+              disabled={favoriteUpdatingId === session.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                void toggleSessionFavorite(session);
+              }}
+            >
+              <FontAwesomeIcon icon={faStar} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="session-action delete"
+              aria-label={`删除 ${session.title}`}
+              title="删除"
+              onClick={async (event) => {
+                event.stopPropagation();
+                await api("/sessions/" + session.id, { method: "DELETE" });
+                if (active === session.id) {
+                  navigateToSession("", true);
+                  setMessages([]);
+                }
+                await load();
+              }}
+            >
+              <FontAwesomeIcon icon={faTrashCan} aria-hidden="true" />
+            </button>
+          </span>
+        )}
+      </div>
+    );
+  };
   return (
     <div
       className={`shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${openWorkspaceFiles.length ? " workspace-open" : ""}`}
@@ -1499,58 +1745,36 @@ function App() {
         </div>
         {sidebarView === "sessions" ? (
           <nav aria-label="历史对话">
-            {sessions.map((s) => (
-              <div
-                className={"session " + (s.id === active ? "active" : "")}
-                key={s.id}
-              >
-                <a
-                  className="session-link"
-                  href={`/sessions/${encodeURIComponent(s.id)}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    autoScrollRef.current = true;
-                    navigateToSession(s.id);
-                    setMobileSessionsOpen(false);
-                  }}
-                >
-                  {s.title}
-                </a>
-                <span className="session-actions">
-                  <button
-                    type="button"
-                    className={`session-action favorite${s.favorite ? " active" : ""}`}
-                    aria-label={`${s.favorite ? "取消收藏" : "收藏"} ${s.title}`}
-                    aria-pressed={Boolean(s.favorite)}
-                    title={s.favorite ? "取消收藏" : "收藏"}
-                    disabled={favoriteUpdatingId === s.id}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void toggleSessionFavorite(s);
+            {me.isRoot
+              ? sessionGroups.map(([username, userSessions]) => (
+                  <details
+                    className="root-session-group"
+                    key={username}
+                    open={expandedRootUsers.has(username)}
+                    onToggle={(event) => {
+                      const open = event.currentTarget.open;
+                      setExpandedRootUsers((current) => {
+                        const next = new Set(current);
+                        if (open) next.add(username);
+                        else next.delete(username);
+                        return next;
+                      });
                     }}
                   >
-                    <FontAwesomeIcon icon={faStar} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    className="session-action delete"
-                    aria-label={`删除 ${s.title}`}
-                    title="删除"
-                    onClick={async (event) => {
-                      event.stopPropagation();
-                      await api("/sessions/" + s.id, { method: "DELETE" });
-                      if (active === s.id) {
-                        navigateToSession("", true);
-                        setMessages([]);
-                      }
-                      await load();
-                    }}
-                  >
-                    <FontAwesomeIcon icon={faTrashCan} aria-hidden="true" />
-                  </button>
-                </span>
-              </div>
-            ))}
+                    <summary>
+                      <span className="root-session-chevron" aria-hidden="true">
+                        &gt;
+                      </span>
+                      <FontAwesomeIcon icon={faFolder} aria-hidden="true" />
+                      <span>{username}</span>
+                      <small>{userSessions.length}</small>
+                    </summary>
+                    <div className="root-session-list">
+                      {userSessions.map(renderSession)}
+                    </div>
+                  </details>
+                ))
+              : sessions.map(renderSession)}
           </nav>
         ) : (
           <div
@@ -1602,7 +1826,9 @@ function App() {
               }
             />
             <div className="workspace-browser-heading">
-              <span title={me.username}>~/{me.username}</span>
+              <span title={me.username}>
+                {me.isRoot ? "~/workspaces" : `~/${me.username}`}
+              </span>
               <button
                 type="button"
                 title="刷新文件目录"
@@ -1624,6 +1850,7 @@ function App() {
               <WorkspaceFileTree
                 files={workspaceFiles}
                 directories={workspaceDirectories}
+                collapseRootDirectories={me.isRoot}
                 pendingEntry={pendingWorkspaceEntry}
                 pendingRename={pendingWorkspaceRename}
                 entrySaving={workspaceNameSaving}
@@ -1688,25 +1915,315 @@ function App() {
             )}
           </div>
         )}
-        <footer>
+        {me.isRoot && showApprovalPanel && (
+          <section
+            ref={approvalPanelRef}
+            className="root-approval-panel"
+            aria-label="注册审批"
+          >
+            <header>
+              <div>
+                <b>Messages</b>
+                <small>注册审批与历史记录</small>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭注册审批"
+                onClick={() => setShowApprovalPanel(false)}
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </header>
+            <div className="root-approval-list">
+              {pendingRegistrations.length ? (
+                pendingRegistrations.map((registration) => (
+                  <article key={registration.id}>
+                    <span className="approval-user-icon" aria-hidden="true">
+                      {Array.from(registration.username)[0]?.toUpperCase() ||
+                        "U"}
+                    </span>
+                    <div>
+                      <b>{registration.username}</b>
+                      <span>{registration.email}</span>
+                      <small>
+                        {new Date(registration.created_at).toLocaleString()}
+                      </small>
+                    </div>
+                    {registration.approval_status === "pending" ? (
+                      <footer>
+                        <button
+                          type="button"
+                          className="reject"
+                          disabled={approvalUpdatingId === registration.id}
+                          onClick={() =>
+                            void reviewRegistration(registration.id, false)
+                          }
+                        >
+                          拒绝
+                        </button>
+                        <button
+                          type="button"
+                          className="approve"
+                          disabled={approvalUpdatingId === registration.id}
+                          onClick={() =>
+                            void reviewRegistration(registration.id, true)
+                          }
+                        >
+                          通过
+                        </button>
+                      </footer>
+                    ) : (
+                      <footer className="approval-history">
+                        <span className={registration.approval_status}>
+                          {registration.approval_status === "approved"
+                            ? "已通过"
+                            : "已拒绝"}
+                        </span>
+                        {registration.reviewed_at && (
+                          <time dateTime={registration.reviewed_at}>
+                            {new Date(
+                              registration.reviewed_at,
+                            ).toLocaleString()}
+                          </time>
+                        )}
+                      </footer>
+                    )}
+                  </article>
+                ))
+              ) : (
+                <div className="root-approval-empty">暂无审批记录</div>
+              )}
+            </div>
+          </section>
+        )}
+        {accountPanel && (
+          <section
+            ref={accountPanelRef}
+            className="account-side-panel"
+            aria-label="账户设置"
+          >
+            <header>
+              <b>
+                {accountPanel === "profile"
+                  ? "个人资料"
+                  : accountPanel === "users"
+                    ? "用户资料"
+                    : "修改密码"}
+              </b>
+              <button
+                type="button"
+                aria-label="关闭账户设置"
+                onClick={() => setAccountPanel(null)}
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </header>
+            {accountPanel === "profile" && (
+              <div className="account-profile">
+                <span className="account-profile-icon">{userInitial}</span>
+                <dl>
+                  <div>
+                    <dt>用户名</dt>
+                    <dd>{me.username}</dd>
+                  </div>
+                  <div>
+                    <dt>邮箱</dt>
+                    <dd>{me.email}</dd>
+                  </div>
+                  <div>
+                    <dt>角色</dt>
+                    <dd>{me.isRoot ? "Root 管理员" : "普通用户"}</dd>
+                  </div>
+                  <div>
+                    <dt>注册时间</dt>
+                    <dd>{new Date(me.created_at).toLocaleString()}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
+            {accountPanel === "users" && (
+              <div className="account-users-list">
+                {adminUsers.map((user) => (
+                  <article key={user.id}>
+                    <button
+                      type="button"
+                      className="account-user-summary"
+                      aria-expanded={selectedAdminUserId === user.id}
+                      onClick={() => setSelectedAdminUserId(user.id)}
+                    >
+                      <span>{Array.from(user.username)[0]?.toUpperCase()}</span>
+                      <b>{user.username}</b>
+                      <FontAwesomeIcon icon={faChevronUp} rotation={90} />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )}
+            {accountPanel === "password" && (
+              <form className="account-password-form" onSubmit={changePassword}>
+                <label>
+                  新密码
+                  <input
+                    type="password"
+                    value={newPassword}
+                    minLength={8}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    required
+                  />
+                </label>
+                {accountNotice && <p>{accountNotice}</p>}
+                <button disabled={passwordSaving}>
+                  {passwordSaving ? "保存中…" : "保存新密码"}
+                </button>
+              </form>
+            )}
+          </section>
+        )}
+        {accountPanel === "users" &&
+          selectedAdminUserId &&
+          (() => {
+            const user = adminUsers.find(
+              (item) => item.id === selectedAdminUserId,
+            );
+            if (!user) return null;
+            return (
+              <section
+                ref={adminUserPopoverRef}
+                className="account-user-popover"
+                aria-label={`${user.username} 用户详情`}
+              >
+                <header>
+                  <div>
+                    <span>
+                      {Array.from(user.username)[0]?.toUpperCase() || "U"}
+                    </span>
+                    <b>{user.username}</b>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="关闭用户详情"
+                    onClick={() => setSelectedAdminUserId("")}
+                  >
+                    <FontAwesomeIcon icon={faXmark} />
+                  </button>
+                </header>
+                <dl className="account-user-details">
+                  <div>
+                    <dt>邮箱</dt>
+                    <dd>{user.email}</dd>
+                  </div>
+                  <div>
+                    <dt>账号状态</dt>
+                    <dd>
+                      {user.approved
+                        ? "正常"
+                        : user.approval_status === "rejected"
+                          ? "已拒绝"
+                          : "待审批"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>注册时间</dt>
+                    <dd>{new Date(user.created_at).toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt>密码</dt>
+                    <dd>••••••••（bcrypt 加密，无法查看明文）</dd>
+                  </div>
+                </dl>
+              </section>
+            );
+          })()}
+        {accountMenuOpen && (
           <div
-            className="sidebar-user"
+            ref={accountMenuRef}
+            className="sidebar-account-menu"
+            role="menu"
+          >
+            <button
+              type="button"
+              onClick={() => void openAccountPanel("profile")}
+            >
+              <FontAwesomeIcon icon={faUser} />
+              个人资料
+            </button>
+            {me.isRoot && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAccountMenuOpen(false);
+                    setAccountPanel(null);
+                    setSelectedAdminUserId("");
+                    setShowApprovalPanel(true);
+                    void refreshPendingRegistrations().catch(() => undefined);
+                  }}
+                >
+                  <FontAwesomeIcon icon={faEnvelope} />
+                  Messages
+                  {pendingRegistrationCount > 0 && (
+                    <span>{pendingRegistrationCount}</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void openAccountPanel("users")}
+                >
+                  <FontAwesomeIcon icon={faUsers} />
+                  用户资料
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => void openAccountPanel("password")}
+            >
+              <FontAwesomeIcon icon={faKey} />
+              修改密码
+            </button>
+            <button
+              type="button"
+              className="logout"
+              onClick={async () => {
+                await api("/auth/logout", { method: "POST" });
+                window.history.replaceState(null, "", "/");
+                location.reload();
+              }}
+            >
+              <FontAwesomeIcon icon={faRightFromBracket} />
+              退出登录
+            </button>
+          </div>
+        )}
+        <footer>
+          <button
+            ref={accountTriggerRef}
+            type="button"
+            className="sidebar-account-trigger"
             title={me.email}
             aria-label={`当前用户 ${me.username}`}
+            aria-expanded={accountMenuOpen}
+            onClick={() => {
+              setSidebarCollapsed(false);
+              setAccountPanel(null);
+              setShowApprovalPanel(false);
+              setSelectedAdminUserId("");
+              setAccountMenuOpen((open) => !open);
+            }}
           >
             <span className="sidebar-user-icon" aria-hidden="true">
               {userInitial}
             </span>
             <span className="sidebar-user-name">{me.username}</span>
-          </div>
-          <button
-            onClick={async () => {
-              await api("/auth/logout", { method: "POST" });
-              window.history.replaceState(null, "", "/");
-              location.reload();
-            }}
-          >
-            退出
+            {me.isRoot && pendingRegistrationCount > 0 && (
+              <span className="sidebar-account-badge">
+                {pendingRegistrationCount}
+              </span>
+            )}
+            <FontAwesomeIcon
+              className="sidebar-account-chevron"
+              icon={faChevronUp}
+            />
           </button>
         </footer>
       </aside>
@@ -1934,7 +2451,7 @@ function App() {
                           type="button"
                           title="重试此问题"
                           aria-label="重试此问题"
-                          disabled={busy}
+                          disabled={busy || viewingForeignSession}
                           onClick={() => retryResponse(i)}
                         >
                           <FontAwesomeIcon icon={faRotateRight} />
@@ -2288,7 +2805,12 @@ function App() {
                 event.preventDefault();
                 void uploadFiles(files);
               }}
-              placeholder="向 CloudInk 描述任务…"
+              placeholder={
+                viewingForeignSession
+                  ? `正在查看 ${activeSession?.username} 的历史会话（只读）`
+                  : "向 CloudInk 描述任务…"
+              }
+              disabled={viewingForeignSession}
             />
           </div>
           {attachments.length > 0 && (
@@ -2325,7 +2847,12 @@ function App() {
                 className="add-button"
                 aria-label="添加附件"
                 title="添加附件"
-                disabled={busy || uploading || attachments.length >= 10}
+                disabled={
+                  viewingForeignSession ||
+                  busy ||
+                  uploading ||
+                  attachments.length >= 10
+                }
                 onClick={() => fileInputRef.current?.click()}
               >
                 {uploading ? "…" : "+"}
@@ -2336,7 +2863,7 @@ function App() {
                 className="slash-button"
                 aria-label="Commands 和 Skills"
                 title="Commands 和 Skills"
-                disabled={busy}
+                disabled={viewingForeignSession || busy}
                 onClick={() => {
                   if (showSlashMenu) {
                     setShowSlashMenu(false);
@@ -2367,7 +2894,7 @@ function App() {
                 ref={modeButtonRef}
                 type="button"
                 className="mode-picker"
-                disabled={busy}
+                disabled={viewingForeignSession || busy}
                 aria-label="CloudInk 执行模式"
                 aria-expanded={showModeMenu}
                 onClick={() => {
@@ -2386,7 +2913,9 @@ function App() {
                 type={busy ? "button" : "submit"}
                 className={`send-button ${busy ? "stop-button" : ""}`}
                 disabled={
-                  uploading || (!busy && !input.trim() && !attachments.length)
+                  viewingForeignSession ||
+                  uploading ||
+                  (!busy && !input.trim() && !attachments.length)
                 }
                 aria-label={busy ? "中止回答" : "发送消息"}
                 title={busy ? "中止回答" : "发送消息"}
@@ -2918,6 +3447,7 @@ function buildFileTree(
 function WorkspaceFileTree({
   files,
   directories,
+  collapseRootDirectories,
   pendingEntry,
   pendingRename,
   entrySaving,
@@ -2939,6 +3469,7 @@ function WorkspaceFileTree({
 }: {
   files: WorkspaceFile[];
   directories: string[];
+  collapseRootDirectories: boolean;
   pendingEntry: PendingWorkspaceEntry | null;
   pendingRename: WorkspaceRenameTarget | null;
   entrySaving: boolean;
@@ -2974,6 +3505,7 @@ function WorkspaceFileTree({
         <WorkspaceDirectory
           key={directory.path}
           node={directory}
+          initiallyOpen={!collapseRootDirectories}
           activePath={activePath}
           pendingEntry={pendingEntry}
           pendingRename={pendingRename}
@@ -3089,6 +3621,7 @@ function WorkspaceNewEntry({
 
 function WorkspaceDirectory({
   node,
+  initiallyOpen,
   activePath,
   pendingEntry,
   pendingRename,
@@ -3109,6 +3642,7 @@ function WorkspaceDirectory({
   onDropFiles,
 }: {
   node: FileTreeNode;
+  initiallyOpen: boolean;
   activePath: string;
   pendingEntry: PendingWorkspaceEntry | null;
   pendingRename: WorkspaceRenameTarget | null;
@@ -3128,10 +3662,12 @@ function WorkspaceDirectory({
   onDropTarget: (event: React.DragEvent, directory: string) => void;
   onDropFiles: (event: React.DragEvent, directory: string) => void;
 }) {
+  const [open, setOpen] = useState(initiallyOpen);
   return (
     <details
       className={`file-directory${dropDirectory === node.path ? " drop-target" : ""}`}
-      open
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       {pendingRename?.kind === "folder" && pendingRename.path === node.path ? (
         <WorkspaceRenameEntry
@@ -3171,6 +3707,7 @@ function WorkspaceDirectory({
           <WorkspaceDirectory
             key={directory.path}
             node={directory}
+            initiallyOpen
             activePath={activePath}
             pendingEntry={pendingEntry}
             pendingRename={pendingRename}

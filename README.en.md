@@ -63,7 +63,7 @@ CloudInk is a multi-user AI workspace built with React, Express, SQLite, and the
 
 ### Sessions and workspace
 
-- Register and sign in with email, username, and password; passwords are stored as bcrypt hashes.
+- Submit a registration request with email, username, and password. Root must approve it from sidebar Messages before sign-in; Messages permanently retains pending, approved, and rejected records with their review times. Users can then sign in with either username or email, and passwords are stored as bcrypt hashes.
 - Sessions, messages, attachments, and workspaces are isolated between users.
 - Session URLs use `/sessions/:sessionId` and support refresh recovery and History API navigation.
 - Conversation history supports pinning favorites, removing favorites, and deletion. Favorite state is persisted per user across refreshes and sign-ins.
@@ -143,6 +143,8 @@ In development, Vite proxies `/api` to Express. Register an account on first lau
 PORT=3001
 WEB_PORT=5173
 APP_NAME=CloudInk
+ROOT_EMAIL=root@cloudink.com
+ROOT_PASSWORD=replace-with-a-strong-root-password
 JWT_SECRET=replace-with-at-least-32-random-characters
 CLAUDE_CLI_PATH=claude
 CLAUDE_ALLOWED_TOOLS=Bash
@@ -156,6 +158,8 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | `PORT`                 | Express API port                                    | `3001`                  |
 | `WEB_PORT`             | Vite Web UI port                                    | `5173`                  |
 | `APP_NAME`             | Brand shown on login, sidebar, and browser title    | `CloudInk`              |
+| `ROOT_EMAIL`           | Root administrator sign-in email                    | `root@cloudink.local`   |
+| `ROOT_PASSWORD`        | Strong password used for initial Root creation      | Root is not created     |
 | `JWT_SECRET`           | JWT secret; use a strong random value in production | Development placeholder |
 | `CLAUDE_CLI_PATH`      | Claude CLI command or absolute path                 | `claude`                |
 | `CLAUDE_ALLOWED_TOOLS` | Claude tools allowed automatically                  | `Bash`                  |
@@ -164,6 +168,8 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | `DATA_DIR`             | Directory for SQLite and default workspaces         | `data`                  |
 
 Changing `WORKSPACE_DIR` does not migrate existing data. Stop the service, move the old workspaces, and ensure that the operating-system account running the service has read/write access.
+
+When `ROOT_PASSWORD` is configured, the service creates the reserved `root` username. The password is used only for initial creation and can then be changed persistently from the sidebar account menu; `ROOT_EMAIL` is still synchronized at startup. Root can browse all conversations grouped by username and access every workspace through top-level user folders; other users' conversations are read-only. Never commit the real Root password.
 
 ## Production deployment
 

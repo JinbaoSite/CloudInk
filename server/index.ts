@@ -35,6 +35,39 @@ import {
 } from "./claude.js";
 const app = express();
 const appName = process.env.APP_NAME?.trim().slice(0, 60) || "CloudInk";
+const ROOT_USERNAME = "root";
+const rootPassword = process.env.ROOT_PASSWORD;
+if (rootPassword) {
+  const rootEmail = (process.env.ROOT_EMAIL || "root@cloudink.local")
+    .trim()
+    .toLowerCase();
+  if (
+    rootPassword.length < 8 ||
+    !z.string().email().safeParse(rootEmail).success
+  )
+    throw new Error("ROOT_EMAIL 或 ROOT_PASSWORD 配置无效");
+  const existingRoot = db
+    .prepare("SELECT id FROM users WHERE username=?")
+    .get(ROOT_USERNAME) as { id: string } | undefined;
+  if (existingRoot)
+    db.prepare("UPDATE users SET email=?,approved=1 WHERE id=?").run(
+      rootEmail,
+      existingRoot.id,
+    );
+  else {
+    const passwordHash = await bcrypt.hash(rootPassword, 12);
+    db.prepare(
+      "INSERT INTO users(id,email,password_hash,created_at,username,approved) VALUES(?,?,?,?,?,1)",
+    ).run(
+      crypto.randomUUID(),
+      rootEmail,
+      passwordHash,
+      new Date().toISOString(),
+      ROOT_USERNAME,
+    );
+  }
+  fs.mkdirSync(path.join(workspaceRoot, ROOT_USERNAME), { recursive: true });
+}
 const detectedModel = detectClaudeModel(process.cwd());
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
@@ -224,7 +257,11 @@ const upload = multer({
         .prepare("SELECT username FROM users WHERE id=?")
         .get(uid) as { username: string } | undefined;
       if (!user) return done(new Error("用户不存在"), "");
-      const workspace = path.join(workspaceRoot, user.username);
+      const isWorkspaceUpload = typeof req.query.directory === "string";
+      const workspace =
+        user.username === ROOT_USERNAME && isWorkspaceUpload
+          ? workspaceRoot
+          : path.join(workspaceRoot, user.username);
       fs.mkdirSync(workspace, { recursive: true });
       try {
         const requestedDirectory =
@@ -249,7 +286,10 @@ const upload = multer({
           .prepare("SELECT username FROM users WHERE id=?")
           .get(uid) as { username: string } | undefined;
         if (!user) throw new Error("用户不存在");
-        const workspace = path.join(workspaceRoot, user.username);
+        const workspace =
+          user.username === ROOT_USERNAME
+            ? workspaceRoot
+            : path.join(workspaceRoot, user.username);
         const directory = resolveWorkspaceDirectory(
           workspace,
           req.query.directory,
@@ -273,6 +313,18 @@ const credentials = z.object({
     .transform((v) => v.toLowerCase()),
   password: z.string().min(6).max(128),
 });
+const loginCredentials = z
+  .object({
+    identifier: z.string().trim().min(2).max(254).optional(),
+    // Keep accepting `email` so older clients can still sign in.
+    email: z.string().trim().min(2).max(254).optional(),
+    password: z.string().min(6).max(128),
+  })
+  .transform((value) => ({
+    identifier: (value.identifier || value.email || "").toLowerCase(),
+    password: value.password,
+  }))
+  .refine((value) => Boolean(value.identifier));
 const registration = credentials.extend({
   username: z
     .string()
@@ -287,11 +339,13 @@ app.post("/api/auth/register", async (req, res) => {
     return res.status(400).json({
       error: "请输入有效邮箱、至少 6 位密码和有效用户名",
     });
+  if (p.data.username === ROOT_USERNAME)
+    return res.status(403).json({ error: "该用户名为系统保留账号" });
   try {
     const id = crypto.randomUUID(),
       now = new Date().toISOString();
     db.prepare(
-      "INSERT INTO users(id,email,password_hash,created_at,username) VALUES(?,?,?,?,?)",
+      "INSERT INTO users(id,email,password_hash,created_at,username,approved,approval_status) VALUES(?,?,?,?,?,0,'pending')",
     ).run(
       id,
       p.data.email,
@@ -299,25 +353,27 @@ app.post("/api/auth/register", async (req, res) => {
       now,
       p.data.username,
     );
-    fs.mkdirSync(path.join(workspaceRoot, p.data.username), {
-      recursive: true,
+    return res.status(202).json({
+      pending: true,
+      message: "注册申请已提交，请等待管理员审批",
     });
-    res
-      .cookie("session", await tokenFor(id), cookieOptions)
-      .status(201)
-      .json({ email: p.data.email, username: p.data.username });
   } catch {
     return res.status(409).json({ error: "邮箱或用户名已注册" });
   }
 });
 app.post("/api/auth/login", async (req, res) => {
-  const p = credentials.safeParse(req.body);
-  if (!p.success) return res.status(400).json({ error: "邮箱或密码错误" });
+  const p = loginCredentials.safeParse(req.body);
+  if (!p.success)
+    return res.status(400).json({ error: "用户名、邮箱或密码错误" });
   const u = db
-    .prepare("SELECT * FROM users WHERE email=?")
-    .get(p.data.email) as any;
+    .prepare("SELECT * FROM users WHERE email=? OR username=?")
+    .get(p.data.identifier, p.data.identifier) as any;
   if (!u || !(await bcrypt.compare(p.data.password, u.password_hash)))
-    return res.status(401).json({ error: "邮箱或密码错误" });
+    return res.status(401).json({ error: "用户名、邮箱或密码错误" });
+  if (u.approval_status === "rejected")
+    return res.status(403).json({ error: "注册申请未通过，请联系 Root" });
+  if (!u.approved)
+    return res.status(403).json({ error: "账号正在等待管理员审批" });
   res
     .cookie("session", await tokenFor(u.id), cookieOptions)
     .json({ email: u.email, username: u.username });
@@ -327,12 +383,100 @@ app.post("/api/auth/logout", (_req, res) =>
 );
 app.get("/api/me", requireAuth, (req, res) => {
   const u = db
-    .prepare("SELECT email,username FROM users WHERE id=?")
+    .prepare("SELECT email,username,created_at FROM users WHERE id=?")
     .get((req as AuthedRequest).userId);
-  res.json(u);
+  res.json(
+    u && {
+      ...(u as { email: string; username: string; created_at: string }),
+      isRoot: (u as { username: string }).username === ROOT_USERNAME,
+    },
+  );
+});
+const passwordChange = z.object({
+  newPassword: z.string().min(8).max(128),
+});
+app.post("/api/me/password", requireAuth, async (req, res) => {
+  const parsed = passwordChange.safeParse(req.body);
+  if (!parsed.success)
+    return res.status(400).json({ error: "新密码至少需要 8 位" });
+  db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(
+    await bcrypt.hash(parsed.data.newPassword, 12),
+    (req as AuthedRequest).userId,
+  );
+  return res.status(204).end();
 });
 app.get("/api/config", requireAuth, async (_req, res) =>
   res.json({ model: await detectedModel, appName }),
+);
+function rootUser(req: express.Request) {
+  return db
+    .prepare("SELECT username FROM users WHERE id=?")
+    .get((req as AuthedRequest).userId) as { username: string } | undefined;
+}
+function requireRoot(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  if (rootUser(req)?.username !== ROOT_USERNAME)
+    return res.status(403).json({ error: "仅 Root 可以执行此操作" });
+  next();
+}
+app.get("/api/admin/registrations", requireAuth, requireRoot, (_req, res) => {
+  const users = db
+    .prepare(
+      `SELECT id,username,email,created_at,approval_status,reviewed_at
+       FROM users
+       WHERE approval_status IS NOT NULL
+       ORDER BY CASE approval_status WHEN 'pending' THEN 0 ELSE 1 END,
+                COALESCE(reviewed_at,created_at) DESC`,
+    )
+    .all();
+  return res.json({ users });
+});
+app.get("/api/admin/users", requireAuth, requireRoot, (_req, res) => {
+  const users = db
+    .prepare(
+      `SELECT id,username,email,created_at,approved,approval_status
+       FROM users ORDER BY created_at DESC`,
+    )
+    .all();
+  return res.json({ users });
+});
+app.post(
+  "/api/admin/registrations/:id/approve",
+  requireAuth,
+  requireRoot,
+  (req, res) => {
+    const user = db
+      .prepare(
+        "SELECT username FROM users WHERE id=? AND approval_status='pending'",
+      )
+      .get(req.params.id) as { username: string } | undefined;
+    if (!user) return res.status(404).json({ error: "待审批用户不存在" });
+    fs.mkdirSync(path.join(workspaceRoot, user.username), { recursive: true });
+    db.prepare(
+      "UPDATE users SET approved=1,approval_status='approved',reviewed_at=? WHERE id=?",
+    ).run(new Date().toISOString(), req.params.id);
+    return res.json({ id: req.params.id, approved: true });
+  },
+);
+app.delete(
+  "/api/admin/registrations/:id",
+  requireAuth,
+  requireRoot,
+  (req, res) => {
+    const result = db
+      .prepare(
+        `UPDATE users
+         SET approved=0,approval_status='rejected',reviewed_at=?
+         WHERE id=? AND approval_status='pending' AND username<>?`,
+      )
+      .run(new Date().toISOString(), req.params.id, ROOT_USERNAME);
+    if (!result.changes)
+      return res.status(404).json({ error: "待审批用户不存在" });
+    return res.json({ id: req.params.id, approved: false });
+  },
 );
 app.get("/api/slash-items", requireAuth, async (req, res) => {
   const uid = (req as AuthedRequest).userId;
@@ -361,7 +505,10 @@ app.get("/api/workspace/files", requireAuth, (req, res) => {
     { username: string } | undefined;
   if (!user) return res.status(401).json({ error: "用户不存在" });
 
-  const workspace = path.join(workspaceRoot, user.username);
+  const workspace =
+    user.username === ROOT_USERNAME
+      ? workspaceRoot
+      : path.join(workspaceRoot, user.username);
   fs.mkdirSync(workspace, { recursive: true });
   const ignored = new Set([".git", "node_modules", ".claude", "dist", "build"]);
   const files: Array<{ name: string; path: string; size: number }> = [];
@@ -409,7 +556,9 @@ function userWorkspace(req: express.Request) {
   const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
     { username: string } | undefined;
   if (!user) return null;
-  return path.join(workspaceRoot, user.username);
+  return user.username === ROOT_USERNAME
+    ? workspaceRoot
+    : path.join(workspaceRoot, user.username);
 }
 app.get(/^\/api\/workspace\/preview\/(.+)$/, requireAuth, (req, res) => {
   const workspace = userWorkspace(req);
@@ -781,7 +930,11 @@ app.post("/api/files", requireAuth, (req, res) => {
 
     const saved = files.map((file) => {
       const original = path.basename(file.originalname).slice(0, 180);
-      const workspace = path.join(workspaceRoot, user.username);
+      const workspace =
+        user.username === ROOT_USERNAME &&
+        typeof req.query.directory === "string"
+          ? workspaceRoot
+          : path.join(workspaceRoot, user.username);
       return {
         name: original,
         path: path.relative(workspace, file.path).split(path.sep).join("/"),
@@ -791,15 +944,29 @@ app.post("/api/files", requireAuth, (req, res) => {
     return res.status(201).json({ files: saved });
   });
 });
-app.get("/api/sessions", requireAuth, (req, res) =>
-  res.json(
-    db
-      .prepare(
-        "SELECT id,title,created_at,updated_at,favorite FROM sessions WHERE user_id=? ORDER BY favorite DESC,updated_at DESC",
-      )
-      .all((req as AuthedRequest).userId),
-  ),
-);
+app.get("/api/sessions", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
+    { username: string } | undefined;
+  if (!user) return res.status(401).json({ error: "用户不存在" });
+  const sessions =
+    user.username === ROOT_USERNAME
+      ? db
+          .prepare(
+            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,u.username
+           FROM sessions s JOIN users u ON u.id=s.user_id
+           ORDER BY u.username,s.favorite DESC,s.updated_at DESC`,
+          )
+          .all()
+      : db
+          .prepare(
+            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,u.username
+           FROM sessions s JOIN users u ON u.id=s.user_id
+           WHERE s.user_id=? ORDER BY s.favorite DESC,s.updated_at DESC`,
+          )
+          .all(uid);
+  return res.json(sessions);
+});
 app.post("/api/sessions", requireAuth, (req, res) => {
   const id = crypto.randomUUID(),
     claude = crypto.randomUUID(),
@@ -827,9 +994,12 @@ app.post("/api/sessions/:id/favorite", requireAuth, (req, res) => {
 });
 app.get("/api/sessions/:id/messages", requireAuth, (req, res) => {
   const uid = (req as AuthedRequest).userId;
+  const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
+    { username: string } | undefined;
+  if (!user) return res.status(401).json({ error: "用户不存在" });
   const ok = db
-    .prepare("SELECT 1 FROM sessions WHERE id=? AND user_id=?")
-    .get(req.params.id, uid);
+    .prepare("SELECT 1 FROM sessions WHERE id=? AND (user_id=? OR ?=1)")
+    .get(req.params.id, uid, user.username === ROOT_USERNAME ? 1 : 0);
   if (!ok) return res.status(404).json({ error: "会话不存在" });
   res.json(
     db

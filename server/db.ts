@@ -8,7 +8,7 @@ export const db = new Database(path.join(root, "app.db"));
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 db.exec(`
-CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at TEXT NOT NULL,username TEXT UNIQUE NOT NULL);
+CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at TEXT NOT NULL,username TEXT UNIQUE NOT NULL,approved INTEGER NOT NULL DEFAULT 1,approval_status TEXT,reviewed_at TEXT);
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,title TEXT NOT NULL,claude_session_id TEXT UNIQUE NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,favorite INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS published_pages(id TEXT PRIMARY KEY,token TEXT UNIQUE NOT NULL,user_id TEXT NOT NULL,file_path TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'file',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,UNIQUE(user_id,file_path));
@@ -46,10 +46,24 @@ const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{
 if (!userColumns.some((column) => column.name === "username")) {
   db.exec("ALTER TABLE users ADD COLUMN username TEXT");
 }
+if (!userColumns.some((column) => column.name === "approved")) {
+  db.exec("ALTER TABLE users ADD COLUMN approved INTEGER NOT NULL DEFAULT 1");
+}
+if (!userColumns.some((column) => column.name === "approval_status")) {
+  db.exec("ALTER TABLE users ADD COLUMN approval_status TEXT");
+}
+if (!userColumns.some((column) => column.name === "reviewed_at")) {
+  db.exec("ALTER TABLE users ADD COLUMN reviewed_at TEXT");
+}
 
 const users = db
-  .prepare("SELECT id,email,username FROM users ORDER BY created_at")
-  .all() as Array<{ id: string; email: string; username: string | null }>;
+  .prepare("SELECT id,email,username,approved FROM users ORDER BY created_at")
+  .all() as Array<{
+  id: string;
+  email: string;
+  username: string | null;
+  approved: number;
+}>;
 const usedNames = new Set(users.map((user) => user.username).filter(Boolean));
 const setUsername = db.prepare("UPDATE users SET username=? WHERE id=?");
 for (const user of users) {
@@ -73,7 +87,7 @@ export const workspaceRoot = path.resolve(
 );
 fs.mkdirSync(workspaceRoot, { recursive: true });
 for (const user of users) {
-  if (!user.username) continue;
+  if (!user.username || !user.approved) continue;
   const oldPath = path.join(workspaceRoot, user.id);
   const newPath = path.join(workspaceRoot, user.username);
   if (fs.existsSync(oldPath) && !fs.existsSync(newPath)) {

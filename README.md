@@ -63,7 +63,7 @@ CloudInk 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用�
 
 ### 会话与工作区
 
-- 邮箱、用户名和密码注册登录，密码使用 bcrypt 哈希保存。
+- 使用邮箱、用户名和密码提交注册申请，Root 在侧边栏 Messages 中批准后方可登录；Messages 会永久保留待处理、已通过和已拒绝记录及处理时间。登录时可输入用户名或邮箱，密码使用 bcrypt 哈希保存。
 - 用户之间的会话、消息、附件和工作区相互隔离。
 - 会话地址为 `/sessions/:sessionId`，支持刷新恢复和 History API 导航。
 - 历史会话支持收藏置顶、取消收藏和删除；收藏状态按用户持久化，刷新或重新登录后仍然保留。
@@ -142,6 +142,8 @@ npm run dev
 PORT=3001
 WEB_PORT=5173
 APP_NAME=CloudInk
+ROOT_EMAIL=root@cloudink.com
+ROOT_PASSWORD=replace-with-a-strong-root-password
 JWT_SECRET=replace-with-at-least-32-random-characters
 CLAUDE_CLI_PATH=claude
 CLAUDE_ALLOWED_TOOLS=Bash
@@ -155,6 +157,8 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | `PORT`                 | Express API 端口                   | `3001`                  |
 | `WEB_PORT`             | Vite Web UI 端口                   | `5173`                  |
 | `APP_NAME`             | 登录页、侧边栏与浏览器标题的品牌名 | `CloudInk`              |
+| `ROOT_EMAIL`           | Root 管理员登录邮箱                | `root@cloudink.local`   |
+| `ROOT_PASSWORD`        | 首次创建 Root 管理员使用的强密码   | 不创建 Root             |
 | `JWT_SECRET`           | JWT 密钥；生产环境必须使用强随机值 | 开发占位值              |
 | `CLAUDE_CLI_PATH`      | Claude CLI 命令或绝对路径          | `claude`                |
 | `CLAUDE_ALLOWED_TOOLS` | 自动允许的 Claude 工具             | `Bash`                  |
@@ -163,6 +167,8 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | `DATA_DIR`             | SQLite 与默认工作区的数据目录      | `data`                  |
 
 修改 `WORKSPACE_DIR` 不会自动迁移已有数据。请先停止服务，将旧工作区移动到新位置并确保运行服务的系统账号拥有读写权限。
+
+配置 `ROOT_PASSWORD` 后，服务会创建保留用户名 `root`；该密码只用于首次创建，之后可从侧边栏账户菜单修改并持久保存。服务仍会在启动时同步 `ROOT_EMAIL`。Root 可按用户名分组查看所有历史会话，并从文件树的用户一级目录访问所有工作区；其他用户的历史会话为只读。不要将真实 Root 密码提交到仓库。
 
 ## 生产部署
 
