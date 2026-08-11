@@ -124,7 +124,7 @@ const executionModes: Array<{
     value: "auto",
     icon: faWandMagicSparkles,
     name: "Auto",
-    description: "Claude 自动判断并执行所需工具",
+    description: "自动判断并执行所需工具",
   },
   {
     value: "plan",
@@ -142,13 +142,13 @@ const executionModes: Array<{
     value: "acceptEdits",
     icon: faPenToSquare,
     name: "Edit automatically",
-    description: "自动接受 Claude 的文件编辑",
+    description: "自动接受文件编辑",
   },
 ];
 const slashCommands = [
   { name: "/compact", description: "压缩当前对话上下文" },
   { name: "/context", description: "查看上下文和 Token 使用情况" },
-  { name: "/doctor", description: "检查 Claude Code 配置与运行环境" },
+  { name: "/doctor", description: "检查智能代理配置与运行环境" },
   { name: "/review", description: "审查当前工作区的代码变更" },
   { name: "/security-review", description: "检查代码中的安全风险" },
 ];
@@ -254,7 +254,7 @@ async function api(url: string, options?: RequestInit) {
     throw new Error((await r.json().catch(() => ({}))).error || "请求失败");
   return r.status === 204 ? null : r.json();
 }
-function Login({ onDone }: { onDone: () => void }) {
+function Login({ onDone, appName }: { onDone: () => void; appName: string }) {
   const [register, setRegister] = useState(false),
     [username, setUsername] = useState(""),
     [email, setEmail] = useState(""),
@@ -276,9 +276,9 @@ function Login({ onDone }: { onDone: () => void }) {
   return (
     <main className="login">
       <form onSubmit={submit}>
-        <div className="brand">✦ Claude Code UI</div>
+        <div className="brand">✦ {appName}</div>
         <h1>{register ? "创建账号" : "欢迎回来"}</h1>
-        <p>在浏览器中继续你的 Claude Code 工作</p>
+        <p>让灵感、代码与智能协作在此汇流</p>
         {register && (
           <label>
             用户名
@@ -326,13 +326,20 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 function App() {
+  const defaultSidebarWidth = () =>
+    Math.max(180, Math.min(520, Math.round(window.innerWidth * 0.15)));
+  const defaultWorkspaceWidth = () =>
+    Math.max(360, Math.round(window.innerWidth * 0.6));
   const initialSidebarWidth = () => {
     const saved = Number(localStorage.getItem("claude-ui-sidebar-width"));
-    return Number.isFinite(saved) && saved >= 220 && saved <= 520 ? saved : 280;
+    return Number.isFinite(saved) && saved >= 180 && saved <= 520
+      ? saved
+      : defaultSidebarWidth();
   };
   const [me, setMe] = useState<
       { email: string; username: string } | null | undefined
     >(),
+    [appName, setAppName] = useState("CloudInk"),
     [sessions, setSessions] = useState<Session[]>([]),
     [active, setActive] = useState(sessionIdFromLocation),
     [messages, setMessages] = useState<Message[]>([]),
@@ -360,7 +367,9 @@ function App() {
     [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth),
     [workspaceWidth, setWorkspaceWidth] = useState(() => {
       const saved = Number(localStorage.getItem("claude-ui-workspace-width"));
-      return Number.isFinite(saved) && saved >= 420 ? saved : 620;
+      return Number.isFinite(saved) && saved >= 360
+        ? saved
+        : defaultWorkspaceWidth();
     }),
     [fileContextMenu, setFileContextMenu] = useState<FileContextMenu | null>(
       null,
@@ -451,6 +460,12 @@ function App() {
     setActive(id);
   }
   useEffect(() => {
+    void api("/public-config")
+      .then((config) => {
+        if (typeof config.appName === "string" && config.appName.trim())
+          setAppName(config.appName.trim());
+      })
+      .catch(() => undefined);
     api("/me")
       .then((user) => {
         setMe(user);
@@ -461,6 +476,9 @@ function App() {
       })
       .catch(() => setMe(null));
   }, []);
+  useEffect(() => {
+    document.title = appName;
+  }, [appName]);
   useEffect(() => {
     localStorage.setItem("claude-ui-sidebar-width", String(sidebarWidth));
   }, [sidebarWidth]);
@@ -1183,7 +1201,7 @@ function App() {
           });
         }
         if (evt.type === "error")
-          throw new Error(evt.error || "Claude 请求失败");
+          throw new Error(evt.error || "CloudInk 请求失败");
       };
       while (true) {
         const { done, value } = await reader.read();
@@ -1224,7 +1242,7 @@ function App() {
     }
   }
   if (me === undefined) return <div className="center">加载中…</div>;
-  if (!me) return <Login onDone={() => location.reload()} />;
+  if (!me) return <Login appName={appName} onDone={() => location.reload()} />;
   const lastActivityEntry = messages.reduce<{
     index: number;
     activity: Activity | null;
@@ -1240,8 +1258,10 @@ function App() {
   const conversationPhase = busy
     ? lastActivity?.kind === "tool" && lastActivity.output == null
       ? { label: "Running", detail: activityDisplayLabel(lastActivity) }
-      : { label: "Thinking", detail: "Claude is working" }
+      : { label: "Thinking", detail: "CloudInk is working" }
     : null;
+  const userInitial =
+    Array.from(me.username.trim())[0]?.toLocaleUpperCase() || "U";
   return (
     <div
       className={`shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${openWorkspaceFiles.length ? " workspace-open" : ""}`}
@@ -1262,7 +1282,7 @@ function App() {
       )}
       <aside className={mobileSessionsOpen ? "mobile-open" : ""}>
         <div className="sidebar-heading">
-          <div className="brand">✦ Claude Code</div>
+          <div className="brand">✦ {appName}</div>
           <button
             type="button"
             className="sidebar-collapse"
@@ -1480,7 +1500,16 @@ function App() {
           </div>
         )}
         <footer>
-          <span title={me.email}>@{me.username}</span>
+          <div
+            className="sidebar-user"
+            title={me.email}
+            aria-label={`当前用户 ${me.username}`}
+          >
+            <span className="sidebar-user-icon" aria-hidden="true">
+              {userInitial}
+            </span>
+            <span className="sidebar-user-name">{me.username}</span>
+          </div>
           <button
             onClick={async () => {
               await api("/auth/logout", { method: "POST" });
@@ -1498,13 +1527,14 @@ function App() {
           role="separator"
           aria-label="调整侧边栏宽度"
           aria-orientation="vertical"
-          aria-valuemin={220}
+          aria-valuemin={180}
           aria-valuemax={520}
           aria-valuenow={sidebarWidth}
           tabIndex={0}
           onDoubleClick={() => {
-            setSidebarWidth(280);
-            localStorage.setItem("claude-ui-sidebar-width", "280");
+            const next = defaultSidebarWidth();
+            setSidebarWidth(next);
+            localStorage.setItem("claude-ui-sidebar-width", String(next));
           }}
           onPointerDown={(event) => {
             resizingSidebarRef.current = true;
@@ -1513,8 +1543,8 @@ function App() {
           }}
           onPointerMove={(event) => {
             if (!resizingSidebarRef.current) return;
-            const maximum = Math.min(520, window.innerWidth - 420);
-            setSidebarWidth(Math.max(220, Math.min(maximum, event.clientX)));
+            const maximum = Math.min(520, window.innerWidth - 360);
+            setSidebarWidth(Math.max(180, Math.min(maximum, event.clientX)));
           }}
           onPointerUp={(event) => {
             if (!resizingSidebarRef.current) return;
@@ -1533,7 +1563,7 @@ function App() {
             const direction = event.key === "ArrowLeft" ? -1 : 1;
             setSidebarWidth((current) => {
               const next = Math.max(
-                220,
+                180,
                 Math.min(520, current + direction * step),
               );
               localStorage.setItem("claude-ui-sidebar-width", String(next));
@@ -1570,6 +1600,11 @@ function App() {
           aria-label="调整 Workspace 和对话区域宽度"
           aria-orientation="vertical"
           tabIndex={0}
+          onDoubleClick={() => {
+            const next = defaultWorkspaceWidth();
+            setWorkspaceWidth(next);
+            localStorage.setItem("claude-ui-workspace-width", String(next));
+          }}
           onPointerDown={(event) => {
             resizingWorkspaceRef.current = true;
             event.currentTarget.setPointerCapture(event.pointerId);
@@ -1580,9 +1615,9 @@ function App() {
             const sidebarOffset = sidebarCollapsed ? 0 : sidebarWidth;
             setWorkspaceWidth(
               Math.max(
-                420,
+                360,
                 Math.min(
-                  window.innerWidth - sidebarOffset - 340,
+                  window.innerWidth - sidebarOffset - 280,
                   event.clientX - sidebarOffset,
                 ),
               ),
@@ -1597,7 +1632,7 @@ function App() {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
             setWorkspaceWidth((current) =>
-              Math.max(420, current + (event.key === "ArrowRight" ? 20 : -20)),
+              Math.max(360, current + (event.key === "ArrowRight" ? 20 : -20)),
             );
           }}
         />
@@ -1652,8 +1687,8 @@ function App() {
             <div className="empty">
               <b>今天想构建什么？</b>
               <span>
-                像 Claude Code CLI
-                一样描述任务，它可以读取、编辑并运行你独立工作区中的代码。
+                直接描述你的任务，CloudInk
+                可以读取、编辑并运行独立工作区中的代码。
               </span>
             </div>
           )}
@@ -1822,7 +1857,7 @@ function App() {
             <div className="mode-menu" ref={modeMenuRef}>
               <div className="mode-menu-heading">
                 <span>执行模式</span>
-                <small>控制 Claude 如何处理工具和文件修改</small>
+                <small>控制工具调用和文件修改方式</small>
               </div>
               {executionModes.map((option) => (
                 <button
@@ -1854,7 +1889,7 @@ function App() {
               {filteredCommands.length > 0 && (
                 <div className="slash-menu-heading">
                   <span>Commands</span>
-                  <small>控制 Claude Code 会话和上下文</small>
+                  <small>管理当前会话和上下文</small>
                 </div>
               )}
               {filteredCommands.map((command) => (
@@ -1870,7 +1905,7 @@ function App() {
               {filteredSkills.length > 0 && (
                 <div className="slash-menu-heading">
                   <span>Skills</span>
-                  <small>调用 Claude 的专业工作流</small>
+                  <small>调用专业工作流</small>
                 </div>
               )}
               {filteredSkills.map((skill) => (
@@ -1994,7 +2029,7 @@ function App() {
                 event.preventDefault();
                 void uploadFiles(files);
               }}
-              placeholder="给 Claude 发消息…"
+              placeholder="向 CloudInk 描述任务…"
             />
           </div>
           {attachments.length > 0 && (
@@ -2074,7 +2109,7 @@ function App() {
                 type="button"
                 className="mode-picker"
                 disabled={busy}
-                aria-label="Claude 执行模式"
+                aria-label="CloudInk 执行模式"
                 aria-expanded={showModeMenu}
                 onClick={() => {
                   setShowModeMenu((visible) => !visible);
@@ -2323,11 +2358,11 @@ function SubmitAnswerPanel({
       Boolean(answers[index]?.length) || Boolean(customAnswers[index]?.trim()),
   );
   return (
-    <section className="submit-answer-panel" aria-label="Claude 需要你的回答">
+    <section className="submit-answer-panel" aria-label="CloudInk 需要你的回答">
       <header>
         <div>
           <span className="answer-status-dot" aria-hidden="true" />
-          <b>Claude needs your input</b>
+          <b>CloudInk needs your input</b>
         </div>
         <button
           type="button"
@@ -2401,7 +2436,7 @@ function SubmitAnswerPanel({
       </div>
       <footer>
         <span>
-          {busy ? "等待 Claude 完成当前步骤…" : "提交后将继续当前会话"}
+          {busy ? "等待 CloudInk 完成当前步骤…" : "提交后将继续当前会话"}
         </span>
         <button
           type="button"

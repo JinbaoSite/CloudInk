@@ -1,4 +1,4 @@
-<h1 align="center">Claude Code UI</h1>
+<h1 align="center">CloudInk</h1>
 
 <p align="center">
   <a href="README.md">简体中文</a> · <strong>English</strong>
@@ -16,11 +16,11 @@
   <img alt="Multi-user" src="https://img.shields.io/badge/Mode-Multi--user-5f5a52?style=flat-square" />
 </p>
 
-![Claude Code UI desktop interface](docs/images/desktop-ui.png)
+![CloudInk desktop interface](docs/images/desktop-ui.png)
 
-Claude Code UI is a multi-user web interface built with React, Express, SQLite, and the Claude Code CLI. In addition to final answers, it streams the full execution process—including Thinking, Read, Bash, Agent, and Skill events—while isolating sessions, messages, and workspaces for every user.
+CloudInk is a multi-user AI workspace built with React, Express, SQLite, and the Claude Code CLI. In addition to final answers, it streams the full execution process—including Thinking, Read, Bash, Agent, and Skill events—while isolating sessions, messages, and workspaces for every user.
 
-## Why Claude Code UI
+## Why CloudInk
 
 - **Authentic Claude Code experience:** Drives the local Claude Code CLI directly with resumable sessions, tool calls, and execution modes.
 - **Transparent execution:** Displays Thinking, tool descriptions, inputs, and outputs separately without mixing tool narration into the final answer.
@@ -57,7 +57,7 @@ Claude Code UI is a multi-user web interface built with React, Express, SQLite, 
 - A new conversation is added to history only after real content is sent.
 - The sidebar switches between chat history and files, and supports resizing, collapsing, and reopening.
 - Clicking a file opens a VS Code-style center workspace. CodeMirror provides syntax highlighting, line numbers, bracket matching, folding, and completion based on file type. Multiple tabs, unsaved-state indicators, tab closing, button save, and `Ctrl/Cmd+S` are supported. The workspace collapses automatically when no file is open.
-- The workspace/chat divider is resizable. File context menus support Open, Rename, Delete, Cut, Copy, Paste, Download, and New File. Deleting a folder recursively removes all descendants and closes editor tabs from that directory.
+- On first opening the workspace on desktop, Sidebar, Workspace, and Chat use a `15% / 60% / 25%` width split. The dividers remain draggable, and double-clicking one restores its default ratio. File context menus support Open, Rename, Delete, Cut, Copy, Paste, Download, and New File. Deleting a folder recursively removes all descendants and closes editor tabs from that directory.
 - Rename, New File, and New Folder use inline editors with visible save/cancel controls, `Enter` to confirm, and `Esc` to cancel. Rename has an independent state and endpoint; failures preserve the entered name and appear inline.
 - Cut/Copy state is visible on the source file. Paste refreshes the tree and Cut updates open-tab paths. Dropping external files onto a folder uploads to that folder; dropping onto a file uses its parent; dropping onto empty space uses the workspace root.
 - The effective Claude working directory is `<WORKSPACE_DIR>/<username>`.
@@ -67,7 +67,7 @@ Claude Code UI is a multi-user web interface built with React, Express, SQLite, 
 Desktop layouts include full session history, files, a resizable sidebar, workspace, and chat. Mobile layouts use a top navigation bar, a drawer for session history, and a safe-area-aware bottom composer.
 
 <p align="center">
-  <img src="docs/images/mobile-ui.jpg" alt="Claude Code UI mobile interface" width="360" />
+  <img src="docs/images/mobile-ui.jpg" alt="CloudInk mobile interface" width="360" />
 </p>
 
 ## Architecture
@@ -128,6 +128,7 @@ In development, Vite proxies `/api` to Express. Register an account on first lau
 ```dotenv
 PORT=3001
 WEB_PORT=5173
+APP_NAME=CloudInk
 JWT_SECRET=replace-with-at-least-32-random-characters
 CLAUDE_CLI_PATH=claude
 CLAUDE_ALLOWED_TOOLS=Bash
@@ -140,6 +141,7 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | ---------------------- | --------------------------------------------------- | ----------------------- |
 | `PORT`                 | Express API port                                    | `3001`                  |
 | `WEB_PORT`             | Vite Web UI port                                    | `5173`                  |
+| `APP_NAME`             | Brand shown on login, sidebar, and browser title    | `CloudInk`              |
 | `JWT_SECRET`           | JWT secret; use a strong random value in production | Development placeholder |
 | `CLAUDE_CLI_PATH`      | Claude CLI command or absolute path                 | `claude`                |
 | `CLAUDE_ALLOWED_TOOLS` | Claude tools allowed automatically                  | `Bash`                  |

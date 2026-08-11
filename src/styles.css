@@ -93,20 +93,20 @@ textarea {
 .shell {
   height: 100vh;
   display: grid;
-  grid-template-columns: var(--sidebar-width, 280px) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 15vw) minmax(0, 1fr);
   position: relative;
 }
 .shell.workspace-open {
   grid-template-columns:
-    var(--sidebar-width, 280px)
+    var(--sidebar-width, 15vw)
     minmax(
-      420px,
+      360px,
       min(
-        var(--workspace-width, 620px),
-        calc(100vw - var(--sidebar-width, 280px) - 340px)
+        var(--workspace-width, 60vw),
+        calc(100vw - var(--sidebar-width, 15vw) - 280px)
       )
     )
-    minmax(340px, 1fr);
+    minmax(280px, 1fr);
 }
 .desktop-sidebar-open,
 .sidebar-collapse {
@@ -140,7 +140,7 @@ textarea {
   z-index: 20;
   top: 0;
   bottom: 0;
-  left: calc(var(--sidebar-width, 280px) - 4px);
+  left: calc(var(--sidebar-width, 15vw) - 4px);
   display: flex;
   width: 8px;
   align-items: center;
@@ -610,10 +610,33 @@ aside footer {
   font-size: 12px;
   color: #777;
 }
-aside footer span {
+.sidebar-user {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+}
+.sidebar-user-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  border: 1px solid #d1ccc3;
+  border-radius: 7px;
+  background: #e3dfd7;
+  color: #4c4841;
+  font-size: 11px;
+  font-weight: 700;
+}
+.sidebar-user-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
+  white-space: nowrap;
+  color: #5c574f;
+  font-weight: 500;
 }
 aside footer button {
   border: 0;
@@ -643,8 +666,8 @@ aside footer button {
   }
   .shell.workspace-open.sidebar-collapsed {
     grid-template-columns:
-      0 minmax(420px, min(var(--workspace-width, 620px), calc(100vw - 340px)))
-      minmax(340px, 1fr);
+      0 minmax(360px, min(var(--workspace-width, 60vw), calc(100vw - 280px)))
+      minmax(280px, 1fr);
   }
   .shell.sidebar-collapsed > aside {
     visibility: hidden;
@@ -662,10 +685,10 @@ aside footer button {
   top: 0;
   bottom: 0;
   left: calc(
-    var(--sidebar-width, 280px) +
+    var(--sidebar-width, 15vw) +
       min(
-        var(--workspace-width, 620px),
-        calc(100vw - var(--sidebar-width, 280px) - 340px)
+        var(--workspace-width, 60vw),
+        calc(100vw - var(--sidebar-width, 15vw) - 280px)
       ) -
       4px
   );
@@ -686,7 +709,7 @@ body.resizing-workspace .workspace-resizer::after {
   background: #c15f3c73;
 }
 .shell.sidebar-collapsed .workspace-resizer {
-  left: calc(min(var(--workspace-width, 620px), calc(100vw - 340px)) - 4px);
+  left: calc(min(var(--workspace-width, 60vw), calc(100vw - 280px)) - 4px);
 }
 body.resizing-workspace {
   cursor: col-resize;
@@ -739,7 +762,7 @@ body.resizing-workspace {
 @media (min-width: 701px) and (max-width: 900px) {
   .shell.workspace-open,
   .shell.workspace-open.sidebar-collapsed {
-    grid-template-columns: var(--sidebar-width, 280px) minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-width, 15vw) minmax(0, 1fr);
   }
   .shell.workspace-open.sidebar-collapsed {
     grid-template-columns: 0 minmax(0, 1fr);

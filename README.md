@@ -1,4 +1,4 @@
-<h1 align="center">Claude Code UI</h1>
+<h1 align="center">CloudInk</h1>
 
 <p align="center">
   <strong>简体中文</strong> · <a href="README.en.md">English</a>
@@ -16,9 +16,9 @@
   <img alt="Multi-user" src="https://img.shields.io/badge/Mode-Multi--user-5f5a52?style=flat-square" />
 </p>
 
-![Claude Code UI 桌面端界面](docs/images/desktop-ui.png)
+![CloudInk 桌面端界面](docs/images/desktop-ui.png)
 
-Claude Code UI 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用户 Web UI。它不仅展示最终回复，还会实时呈现 Thinking、Read、Bash、Agent、Skill 等执行过程，并为每位用户隔离会话、消息和工作区。
+CloudInk 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用户 AI 工作空间。它不仅展示最终回复，还会实时呈现 Thinking、Read、Bash、Agent、Skill 等执行过程，并为每位用户隔离会话、消息和工作区。
 
 ## 为什么选择它
 
@@ -57,7 +57,7 @@ Claude Code UI 是一个基于 React、Express、SQLite 和 Claude Code CLI 的�
 - 新对话仅在首次发送真实内容时写入历史记录，不产生空白会话。
 - 侧边栏可切换历史记录与文件目录，支持拖拽调宽、收起和展开。
 - 点击文件可展开类似 VS Code 的中间 Workspace；CodeMirror 根据文件类型提供代码高亮、行号、括号匹配、折叠与自动补全，并支持多标签编辑、未保存状态提示、标签关闭，以及按钮或 `Ctrl/Cmd+S` 保存。没有打开文件时 Workspace 自动隐藏，对话区域恢复完整宽度。
-- Workspace 默认获得更宽的编辑空间，并可拖拽它与右侧对话之间的分隔线调整宽度。文件区域支持右键打开、重命名、删除、剪切、复制、粘贴、下载和新建文件；文件夹右键 Delete 会递归删除其中的所有文件和子目录，并关闭该目录下已经打开的编辑器标签。文件与文件夹的 Rename、New File 和 New Folder 都在文件树中直接内联命名，提供 ✓ 保存和 × 取消，也支持 `Enter` 确认、`Esc` 取消，不使用浏览器弹窗。Rename 使用独立状态和专用接口，提交期间会锁定当前命名行，成功后按服务端返回路径刷新文件树，失败则保留输入并在原位展示原因。右击文件夹后创建的文件或文件夹会放入该目录，空白区域也支持粘贴及上传，并可直接拖入文件上传。
+- 桌面端首次打开 Workspace 时，侧边栏、Workspace、Chat 默认按 `15% / 60% / 25%` 分配宽度，仍可拖拽分隔线调整；双击分隔线可恢复默认比例。文件区域支持右键打开、重命名、删除、剪切、复制、粘贴、下载和新建文件；文件夹右键 Delete 会递归删除其中的所有文件和子目录，并关闭该目录下已经打开的编辑器标签。文件与文件夹的 Rename、New File 和 New Folder 都在文件树中直接内联命名，提供 ✓ 保存和 × 取消，也支持 `Enter` 确认、`Esc` 取消，不使用浏览器弹窗。Rename 使用独立状态和专用接口，提交期间会锁定当前命名行，成功后按服务端返回路径刷新文件树，失败则保留输入并在原位展示原因。右击文件夹后创建的文件或文件夹会放入该目录，空白区域也支持粘贴及上传，并可直接拖入文件上传。
 - Cut/Copy 会在源文件上显示状态，Paste 到目录后自动刷新文件树；Cut 同时同步已打开标签的新路径。外部文件拖到文件夹节点时上传到该文件夹，拖到文件时上传到其所在目录，拖到空白处则上传到工作区根目录。
 - 实际 Claude 工作目录为 `<WORKSPACE_DIR>/<username>`。
 
@@ -66,7 +66,7 @@ Claude Code UI 是一个基于 React、Express、SQLite 和 Claude Code CLI 的�
 桌面端提供完整的历史会话、文件目录和可调节侧边栏；手机端使用顶部导航、抽屉式历史记录和适配安全区域的底部输入框。
 
 <p align="center">
-  <img src="docs/images/mobile-ui.jpg" alt="Claude Code UI 手机端界面" width="360" />
+  <img src="docs/images/mobile-ui.jpg" alt="CloudInk 手机端界面" width="360" />
 </p>
 
 ## 技术架构
@@ -127,6 +127,7 @@ npm run dev
 ```dotenv
 PORT=3001
 WEB_PORT=5173
+APP_NAME=CloudInk
 JWT_SECRET=replace-with-at-least-32-random-characters
 CLAUDE_CLI_PATH=claude
 CLAUDE_ALLOWED_TOOLS=Bash
@@ -139,6 +140,7 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | ---------------------- | ---------------------------------- | ----------------------- |
 | `PORT`                 | Express API 端口                   | `3001`                  |
 | `WEB_PORT`             | Vite Web UI 端口                   | `5173`                  |
+| `APP_NAME`             | 登录页、侧边栏与浏览器标题的品牌名 | `CloudInk`              |
 | `JWT_SECRET`           | JWT 密钥；生产环境必须使用强随机值 | 开发占位值              |
 | `CLAUDE_CLI_PATH`      | Claude CLI 命令或绝对路径          | `claude`                |
 | `CLAUDE_ALLOWED_TOOLS` | 自动允许的 Claude 工具             | `Bash`                  |

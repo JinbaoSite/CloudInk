@@ -34,6 +34,7 @@ import {
   thinkingDeltaFromEvent,
 } from "./claude.js";
 const app = express();
+const appName = process.env.APP_NAME?.trim().slice(0, 60) || "CloudInk";
 const detectedModel = detectClaudeModel(process.cwd());
 const slashCapabilityCache = new Map<
   string,
@@ -44,6 +45,7 @@ const slashCapabilityCache = new Map<
 >();
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
+app.get("/api/public-config", (_req, res) => res.json({ appName }));
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
 function safeUploadFilename(originalName: string) {
   const original = path.basename(originalName).slice(0, 180);
@@ -175,7 +177,7 @@ app.get("/api/me", requireAuth, (req, res) => {
   res.json(u);
 });
 app.get("/api/config", requireAuth, async (_req, res) =>
-  res.json({ model: await detectedModel }),
+  res.json({ model: await detectedModel, appName }),
 );
 app.get("/api/slash-items", requireAuth, async (req, res) => {
   const uid = (req as AuthedRequest).userId;
@@ -862,5 +864,5 @@ if (process.env.NODE_ENV === "production") {
   app.get(/.*/, (_req, res) => res.sendFile(path.resolve("dist/index.html")));
 }
 app.listen(Number(process.env.PORT || 3001), () =>
-  console.log(`Claude Code UI: http://localhost:${process.env.PORT || 3001}`),
+  console.log(`${appName}: http://localhost:${process.env.PORT || 3001}`),
 );
