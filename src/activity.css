@@ -96,7 +96,7 @@
   text-align: center;
   color: #b45c3e;
   font-weight: 700;
-  background: #faf9f6;
+  background: transparent;
 }
 .activity-card pre {
   max-height: 260px;

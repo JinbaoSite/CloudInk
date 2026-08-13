@@ -69,6 +69,12 @@ if (rootPassword) {
   fs.mkdirSync(path.join(workspaceRoot, ROOT_USERNAME), { recursive: true });
 }
 const detectedModel = detectClaudeModel(process.cwd());
+type ActiveClaudeRun = {
+  abort: AbortController;
+  userId: string;
+  startedAt: string;
+};
+const activeClaudeRuns = new Map<string, ActiveClaudeRun>();
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
 app.get("/api/public-config", (_req, res) => res.json({ appName }));
@@ -1013,10 +1019,38 @@ app.get("/api/sessions/:id/messages", requireAuth, (req, res) => {
   );
 });
 app.delete("/api/sessions/:id", requireAuth, (req, res) => {
+  const sessionId = String(req.params.id);
+  if (activeClaudeRuns.has(sessionId))
+    return res.status(409).json({ error: "会话仍在运行，请先中止回答" });
   const r = db
     .prepare("DELETE FROM sessions WHERE id=? AND user_id=?")
     .run(req.params.id, (req as AuthedRequest).userId);
   res.status(r.changes ? 204 : 404).end();
+});
+app.get("/api/sessions/:id/run", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const sessionId = String(req.params.id);
+  const session = db
+    .prepare("SELECT id FROM sessions WHERE id=? AND user_id=?")
+    .get(req.params.id, uid);
+  if (!session) return res.status(404).json({ error: "会话不存在" });
+  const run = activeClaudeRuns.get(sessionId);
+  return res.json({
+    running: Boolean(run && run.userId === uid),
+    startedAt: run?.userId === uid ? run.startedAt : null,
+  });
+});
+app.post("/api/sessions/:id/stop", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const sessionId = String(req.params.id);
+  const session = db
+    .prepare("SELECT id FROM sessions WHERE id=? AND user_id=?")
+    .get(req.params.id, uid);
+  if (!session) return res.status(404).json({ error: "会话不存在" });
+  const run = activeClaudeRuns.get(sessionId);
+  if (!run || run.userId !== uid) return res.status(204).end();
+  run.abort.abort();
+  return res.status(202).json({ stopping: true });
 });
 app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   const body = z
@@ -1061,6 +1095,8 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     .prepare("SELECT * FROM sessions WHERE id=? AND user_id=?")
     .get(req.params.id, uid) as any;
   if (!s) return res.status(404).json({ error: "会话不存在" });
+  if (activeClaudeRuns.has(s.id))
+    return res.status(409).json({ error: "该会话仍有任务在后台运行" });
   const count = (
     db
       .prepare("SELECT count(*) n FROM messages WHERE session_id=?")
@@ -1136,9 +1172,12 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.flushHeaders();
   const abort = new AbortController();
-  res.on("close", () => {
-    if (!res.writableEnded) abort.abort();
-  });
+  const activeRun = {
+    abort,
+    userId: uid,
+    startedAt: new Date().toISOString(),
+  };
+  activeClaudeRuns.set(s.id, activeRun);
   const cwd = workspace;
   fs.mkdirSync(cwd, { recursive: true });
   const child = runClaude({
@@ -1326,6 +1365,7 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   });
   child.stderr.on("data", (c) => (stderr += c));
   child.on("close", (code) => {
+    if (activeClaudeRuns.get(s.id) === activeRun) activeClaudeRuns.delete(s.id);
     if (answer) {
       const t = new Date().toISOString();
       const assistantMessageId = crypto.randomUUID();

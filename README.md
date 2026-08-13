@@ -131,7 +131,7 @@ npm run dev
 
 默认地址：
 
-- Web UI：<http://localhost:5173>
+- Web UI：<http://localhost>
 - API：<http://localhost:3001>
 
 开发模式下 Vite 会将 `/api` 代理到 Express。首次访问后注册账号即可开始使用。
@@ -140,7 +140,7 @@ npm run dev
 
 ```dotenv
 PORT=3001
-WEB_PORT=5173
+WEB_PORT=80
 APP_NAME=CloudInk
 ROOT_EMAIL=root@cloudink.com
 ROOT_PASSWORD=replace-with-a-strong-root-password
@@ -155,7 +155,7 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | 变量                   | 说明                               | 默认值                  |
 | ---------------------- | ---------------------------------- | ----------------------- |
 | `PORT`                 | Express API 端口                   | `3001`                  |
-| `WEB_PORT`             | Vite Web UI 端口                   | `5173`                  |
+| `WEB_PORT`             | Vite Web UI 端口                   | `80`                    |
 | `APP_NAME`             | 登录页、侧边栏与浏览器标题的品牌名 | `CloudInk`              |
 | `ROOT_EMAIL`           | Root 管理员登录邮箱                | `root@cloudink.local`   |
 | `ROOT_PASSWORD`        | 首次创建 Root 管理员使用的强密码   | 不创建 Root             |

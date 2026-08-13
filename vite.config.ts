@@ -4,7 +4,7 @@ import path from "node:path";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const webPort = Number(env.WEB_PORT) || 5173;
+  const webPort = Number(env.WEB_PORT) || 80;
   const apiPort = Number(env.PORT) || 3001;
   const workspaceDirectory = path
     .resolve(

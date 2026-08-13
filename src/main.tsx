@@ -896,6 +896,39 @@ function App() {
       cancelled = true;
     };
   }, [active, me]);
+  useEffect(() => {
+    if (!active || !me) return;
+    let disposed = false;
+    let timer: number | undefined;
+    const syncBackgroundRun = async () => {
+      if (responseAbortRef.current) {
+        timer = window.setTimeout(syncBackgroundRun, 2000);
+        return;
+      }
+      try {
+        const run = (await api(`/sessions/${active}/run`)) as {
+          running: boolean;
+        };
+        if (disposed) return;
+        setBusy(run.running);
+        if (run.running) {
+          const items = (await api(
+            `/sessions/${active}/messages`,
+          )) as Message[];
+          if (!disposed) setMessages(mergeActivityMessages(items));
+        }
+      } catch {
+        // The normal session-loading effect handles missing or inaccessible
+        // sessions. A transient status request must not interrupt the chat.
+      }
+      if (!disposed) timer = window.setTimeout(syncBackgroundRun, 2000);
+    };
+    void syncBackgroundRun();
+    return () => {
+      disposed = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [active, me]);
   useLayoutEffect(() => {
     if (!autoScrollRef.current) return;
     const frame = requestAnimationFrame(() => {
@@ -1656,6 +1689,18 @@ function App() {
       setBusy(false);
     }
   }
+  async function stopResponse() {
+    if (!active) return;
+    try {
+      await api(`/sessions/${active}/stop`, { method: "POST" });
+      responseAbortRef.current?.abort();
+      responseAbortRef.current = null;
+      setBusy(false);
+      await load().catch(() => undefined);
+    } catch (stopError) {
+      setError((stopError as Error).message);
+    }
+  }
   if (me === undefined) return <div className="center">加载中…</div>;
   if (!me) return <Login appName={appName} onDone={() => location.reload()} />;
   const lastActivityEntry = messages.reduce<{
@@ -1939,7 +1984,6 @@ function App() {
               <WorkspaceFileTree
                 files={workspaceFiles}
                 directories={workspaceDirectories}
-                collapseRootDirectories={me.isRoot}
                 pendingEntry={pendingWorkspaceEntry}
                 pendingRename={pendingWorkspaceRename}
                 entrySaving={workspaceNameSaving}
@@ -3063,9 +3107,7 @@ function App() {
                 }
                 aria-label={busy ? "中止回答" : "发送消息"}
                 title={busy ? "中止回答" : "发送消息"}
-                onClick={
-                  busy ? () => responseAbortRef.current?.abort() : undefined
-                }
+                onClick={busy ? () => void stopResponse() : undefined}
               >
                 {busy ? <span className="stop-icon" /> : "↑"}
               </button>
@@ -3591,7 +3633,6 @@ function buildFileTree(
 function WorkspaceFileTree({
   files,
   directories,
-  collapseRootDirectories,
   pendingEntry,
   pendingRename,
   entrySaving,
@@ -3613,7 +3654,6 @@ function WorkspaceFileTree({
 }: {
   files: WorkspaceFile[];
   directories: string[];
-  collapseRootDirectories: boolean;
   pendingEntry: PendingWorkspaceEntry | null;
   pendingRename: WorkspaceRenameTarget | null;
   entrySaving: boolean;
@@ -3691,7 +3731,6 @@ function WorkspaceFileTree({
         <WorkspaceDirectory
           key={directory.path}
           node={directory}
-          initiallyOpen={!collapseRootDirectories}
           activePath={activePath}
           pendingEntry={pendingEntry}
           pendingRename={pendingRename}
@@ -3807,7 +3846,6 @@ function WorkspaceNewEntry({
 
 function WorkspaceDirectory({
   node,
-  initiallyOpen,
   activePath,
   pendingEntry,
   pendingRename,
@@ -3828,7 +3866,6 @@ function WorkspaceDirectory({
   onDropFiles,
 }: {
   node: FileTreeNode;
-  initiallyOpen: boolean;
   activePath: string;
   pendingEntry: PendingWorkspaceEntry | null;
   pendingRename: WorkspaceRenameTarget | null;
@@ -3848,7 +3885,7 @@ function WorkspaceDirectory({
   onDropTarget: (event: React.DragEvent, directory: string) => void;
   onDropFiles: (event: React.DragEvent, directory: string) => void;
 }) {
-  const [open, setOpen] = useState(initiallyOpen);
+  const [open, setOpen] = useState(false);
   return (
     <details
       className={`file-directory${dropDirectory === node.path ? " drop-target" : ""}`}
@@ -3894,7 +3931,6 @@ function WorkspaceDirectory({
           <WorkspaceDirectory
             key={directory.path}
             node={directory}
-            initiallyOpen
             activePath={activePath}
             pendingEntry={pendingEntry}
             pendingRename={pendingRename}
