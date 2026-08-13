@@ -55,6 +55,7 @@ import "./markdown.css";
 import "./activity.css";
 import "./composer.css";
 import "./workspace-editor.css";
+import "./minimax-theme.css";
 type Session = {
   id: string;
   title: string;
