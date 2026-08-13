@@ -4127,7 +4127,12 @@ function ActivityCard({
   if (activity.kind === "narration") {
     return (
       <div className="activity-narration">
-        <ReactMarkdown>{activity.detail || ""}</ReactMarkdown>
+        <span className="activity-icon" aria-hidden="true">
+          ✦
+        </span>
+        <div className="activity-narration-content">
+          <ReactMarkdown>{activity.detail || ""}</ReactMarkdown>
+        </div>
       </div>
     );
   }

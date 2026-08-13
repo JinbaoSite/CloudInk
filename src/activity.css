@@ -1,7 +1,7 @@
 .activity-card {
   position: relative;
   width: 100%;
-  margin: -12px 0 18px;
+  margin: 0 0 5px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -12,19 +12,20 @@
 .activity-card::before {
   content: "";
   position: absolute;
-  left: 8px;
-  top: 30px;
-  bottom: -20px;
+  z-index: 0;
+  left: 9px;
+  top: 25px;
+  bottom: -7px;
   width: 1px;
   background: #ddd9d0;
 }
 
 .activity-card summary {
-  min-height: 34px;
+  min-height: 30px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px 6px 0;
+  padding: 3px 8px 3px 0;
   cursor: pointer;
   list-style: none;
 }
@@ -86,12 +87,16 @@
   color: #a94838;
 }
 .activity-icon {
-  width: 18px;
+  z-index: 1;
+  display: grid;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  place-items: center;
   text-align: center;
   color: #b45c3e;
   font-weight: 700;
   background: #faf9f6;
-  z-index: 1;
 }
 .activity-card pre {
   max-height: 260px;
@@ -122,14 +127,35 @@
   line-height: 1.6;
 }
 .activity-narration {
+  position: relative;
+  display: grid;
+  grid-template-columns: 19px minmax(0, 1fr);
+  gap: 8px;
   min-width: 0;
-  max-width: calc(100% - 26px);
-  width: min(100%, 800px);
-  margin: -8px 0 18px 26px;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 0 5px;
   color: #4f4a43;
   font-size: 13px;
   line-height: 1.65;
   overflow-wrap: anywhere;
+}
+.activity-narration::after {
+  position: absolute;
+  z-index: 0;
+  top: 20px;
+  bottom: -7px;
+  left: 9px;
+  width: 1px;
+  background: #ddd9d0;
+  content: "";
+}
+.activity-narration > .activity-icon {
+  margin-top: 1px;
+}
+.activity-narration-content {
+  min-width: 0;
+  padding: 1px 8px 3px 0;
 }
 .activity-narration .markdown-content > :first-child {
   margin-top: 0;
@@ -138,7 +164,28 @@
   margin-bottom: 0;
 }
 .activity-narration p {
-  margin: 0 0 0.65em;
+  margin: 0 0 0.35em;
+}
+
+.activity-card + article.assistant,
+.activity-narration + article.assistant {
+  position: relative;
+  margin-top: 0;
+  padding-left: 27px;
+}
+
+.activity-card + article.assistant::before,
+.activity-narration + article.assistant::before {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #48443e;
+  box-shadow: 0 0 0 4px #faf9f6;
+  content: "";
 }
 .thinking-markdown .markdown-content > :first-child {
   margin-top: 0;
