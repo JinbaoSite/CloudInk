@@ -884,6 +884,7 @@ nav {
   text-align: center;
 }
 .file-tree {
+  --workspace-tree-indent: 19px;
   padding: 1px 0 10px;
   color: #565149;
   font-size: 12px;
@@ -1040,23 +1041,33 @@ nav {
   white-space: nowrap;
 }
 .file-directory-children {
-  margin-left: 13px;
-  padding-left: 5px;
-  border-left: 1px solid #d8d4cc;
+  position: relative;
+  margin-left: var(--workspace-tree-indent);
+  padding-left: 0;
+}
+.file-directory-children::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -6px;
+  width: 1px;
+  background: #d8d4cc;
+  content: "";
+  pointer-events: none;
 }
 .workspace-file-icon {
   display: grid;
   place-items: center;
-  width: 17px;
+  width: 19px;
   height: 19px;
-  flex: 0 0 17px;
-  margin: 0 8px 0 14px;
+  flex: 0 0 19px;
+  margin: 0 0 0 14px;
   color: #777168;
 }
 .workspace-file-icon svg {
   display: block;
-  width: 17px;
-  height: 19px;
+  width: 15px;
+  height: 15px;
   fill: currentColor;
 }
 .workspace-file small {

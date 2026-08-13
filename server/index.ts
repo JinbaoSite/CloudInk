@@ -406,7 +406,10 @@ app.post("/api/me/password", requireAuth, async (req, res) => {
   return res.status(204).end();
 });
 app.get("/api/config", requireAuth, async (_req, res) =>
-  res.json({ model: await detectedModel, appName }),
+  res.json({
+    model: await detectedModel,
+    appName,
+  }),
 );
 function rootUser(req: express.Request) {
   return db

@@ -33,6 +33,7 @@ import {
   faRightFromBracket,
   faChevronUp,
   faCloudArrowUp,
+  faArrowDown,
   faGear,
   faKey,
   faListCheck,
@@ -47,7 +48,7 @@ import {
   faXmark,
   faHand,
 } from "@fortawesome/free-solid-svg-icons";
-import ReactMarkdown from "./MarkdownMessage";
+import ReactMarkdown, { WorkspaceMentionText } from "./MarkdownMessage";
 import type { OpenWorkspaceFile } from "./WorkspaceEditor";
 import "./styles.css";
 import "./chat-layout.css";
@@ -146,6 +147,15 @@ type FileTreeNode = {
 const loadWorkspaceEditor = () => import("./WorkspaceEditor");
 const WorkspaceEditor = lazy(loadWorkspaceEditor);
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
+const IMAGE_ATTACHMENT_PATTERN = /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i;
+function workspacePreviewUrl(filePath: string, prefix = "") {
+  return `/api/workspace/preview/${[prefix, filePath]
+    .filter(Boolean)
+    .join("/")
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/")}`;
+}
 function sessionIdFromLocation() {
   const match = window.location.pathname.match(/^\/sessions\/([^/]+)\/?$/);
   if (!match) return "";
@@ -302,6 +312,34 @@ async function api(url: string, options?: RequestInit) {
   if (!r.ok)
     throw new Error((await r.json().catch(() => ({}))).error || "请求失败");
   return r.status === 204 ? null : r.json();
+}
+function uploadForm(
+  url: string,
+  form: FormData,
+  onProgress: (percent: number) => void,
+) {
+  return new Promise<unknown>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    request.responseType = "json";
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable)
+        onProgress(
+          Math.min(100, Math.round((event.loaded / event.total) * 100)),
+        );
+    });
+    request.addEventListener("load", () => {
+      if (request.status >= 200 && request.status < 300) {
+        onProgress(100);
+        resolve(request.response);
+        return;
+      }
+      reject(new Error(request.response?.error || "上传失败"));
+    });
+    request.addEventListener("error", () => reject(new Error("上传失败")));
+    request.addEventListener("abort", () => reject(new Error("上传已取消")));
+    request.send(form);
+  });
 }
 function Login({ onDone, appName }: { onDone: () => void; appName: string }) {
   const [register, setRegister] = useState(false),
@@ -515,7 +553,13 @@ function App() {
     [approvalUpdatingId, setApprovalUpdatingId] = useState(""),
     [mobileSessionsOpen, setMobileSessionsOpen] = useState(false),
     [uploading, setUploading] = useState(false),
+    [uploadProgress, setUploadProgress] = useState<number | null>(null),
+    [uploadTarget, setUploadTarget] = useState<"composer" | "workspace" | null>(
+      null,
+    ),
+    [uploadLabel, setUploadLabel] = useState(""),
     [draggingFiles, setDraggingFiles] = useState(false),
+    [showScrollToBottom, setShowScrollToBottom] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -689,6 +733,10 @@ function App() {
   useEffect(() => {
     document.title = appName;
   }, [appName]);
+  useEffect(() => {
+    if (!me || workspaceFilesLoaded || workspaceFilesLoading) return;
+    void loadWorkspaceFiles();
+  }, [me, workspaceFilesLoaded, workspaceFilesLoading]);
   useEffect(() => {
     if (!accountMenuOpen && !accountPanel && !showApprovalPanel) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -873,6 +921,7 @@ function App() {
   function create() {
     if (busy) return;
     autoScrollRef.current = true;
+    setShowScrollToBottom(false);
     navigateToSession("");
     setMessages([]);
     setInput("");
@@ -885,6 +934,19 @@ function App() {
     setShowModeMenu(false);
     setMobileSessionsOpen(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+  function scrollMessagesToBottom() {
+    const container = messagesRef.current;
+    if (!container) return;
+    autoScrollRef.current = true;
+    setShowScrollToBottom(false);
+    container.style.scrollBehavior = "auto";
+    container.scrollTop = container.scrollHeight;
+    window.setTimeout(() => {
+      if (!container.isConnected) return;
+      container.scrollTop = container.scrollHeight;
+      container.style.removeProperty("scroll-behavior");
+    }, 250);
   }
   async function uploadFiles(files: FileList | File[] | null) {
     if (!files?.length || uploading) return;
@@ -899,19 +961,22 @@ function App() {
       return;
     }
     setUploading(true);
+    setUploadTarget("composer");
+    setUploadProgress(0);
+    setUploadLabel(
+      selected.length === 1 ? selected[0].name : `${selected.length} 个文件`,
+    );
     setError("");
     try {
       const form = new FormData();
       selected.forEach((file) => form.append("files", file));
-      const response = await fetch("/api/files", {
-        method: "POST",
-        body: form,
-      });
-      if (!response.ok)
-        throw new Error(
-          (await response.json().catch(() => ({}))).error || "上传失败",
-        );
-      const result = (await response.json()) as { files: Attachment[] };
+      const result = (await uploadForm(
+        "/api/files",
+        form,
+        setUploadProgress,
+      )) as {
+        files: Attachment[];
+      };
       setAttachments((current) => [...current, ...result.files].slice(0, 10));
       if (workspaceFilesLoaded)
         setWorkspaceFiles((current) => [
@@ -924,6 +989,9 @@ function App() {
       setError((uploadError as Error).message);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
+      setUploadTarget(null);
+      setUploadLabel("");
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -1271,23 +1339,29 @@ function App() {
     const oversized = selected.find((file) => file.size > MAX_UPLOAD_SIZE);
     if (oversized) return setError(`${oversized.name} 超过 500MB，无法上传`);
     setUploading(true);
+    setUploadTarget("workspace");
+    setUploadProgress(0);
+    setUploadLabel(
+      selected.length === 1 ? selected[0].name : `${selected.length} 个文件`,
+    );
     try {
       const form = new FormData();
       selected.forEach((file) => form.append("files", file));
-      const response = await fetch(
+      await uploadForm(
         `/api/files?directory=${encodeURIComponent(directory)}`,
-        {
-          method: "POST",
-          body: form,
-        },
+        form,
+        setUploadProgress,
       );
-      if (!response.ok)
-        throw new Error((await response.json()).error || "上传失败");
       await refreshWorkspaceFiles();
     } catch (uploadError) {
       setError((uploadError as Error).message);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
+      setUploadTarget(null);
+      setUploadLabel("");
+      if (workspaceFileInputRef.current)
+        workspaceFileInputRef.current.value = "";
       setDraggingWorkspaceFiles(false);
       setWorkspaceDropDirectory(null);
     }
@@ -1331,6 +1405,10 @@ function App() {
         ),
       );
     }
+  }
+  function openWorkspacePath(filePath: string) {
+    const file = workspaceFiles.find((item) => item.path === filePath);
+    if (file) void openWorkspaceFile(file);
   }
   function updateWorkspaceFile(filePath: string, content: string) {
     setOpenWorkspaceFiles((current) =>
@@ -1835,15 +1913,25 @@ function App() {
                 title="刷新文件目录"
                 aria-label="刷新文件目录"
                 onClick={() => {
-                  setWorkspaceFilesLoaded(false);
-                  setWorkspaceFiles([]);
                   void loadWorkspaceFiles(true);
                 }}
               >
                 ↻
               </button>
             </div>
-            {workspaceFilesLoading ? (
+            {uploadTarget === "workspace" && uploadProgress != null && (
+              <div className="workspace-upload-progress" role="status">
+                <span title={uploadLabel}>{uploadLabel}</span>
+                <b>{uploadProgress}%</b>
+                <div className="upload-progress-track">
+                  <i style={{ width: `${uploadProgress}%` }} />
+                </div>
+              </div>
+            )}
+            {workspaceFilesLoading &&
+            !workspaceFilesLoaded &&
+            !workspaceFiles.length &&
+            !workspaceDirectories.length ? (
               <div className="workspace-browser-empty">正在读取文件目录…</div>
             ) : workspaceFiles.length ||
               workspaceDirectories.length ||
@@ -1909,7 +1997,7 @@ function App() {
             ) : (
               <div className="workspace-browser-empty">工作区暂无文件</div>
             )}
-            {draggingWorkspaceFiles && (
+            {draggingWorkspaceFiles && uploadTarget !== "workspace" && (
               <div className="workspace-drop-overlay">
                 上传到 {workspaceDropDirectory || "工作区根目录"}
               </div>
@@ -2377,7 +2465,9 @@ function App() {
               container.scrollHeight -
               container.scrollTop -
               container.clientHeight;
-            autoScrollRef.current = distanceFromBottom < 96;
+            const isNearBottom = distanceFromBottom < 96;
+            autoScrollRef.current = isNearBottom;
+            setShowScrollToBottom(!isNearBottom);
           }}
         >
           {messages.length === 0 && (
@@ -2418,11 +2508,18 @@ function App() {
                   {m.role === "assistant" ? (
                     <ReactMarkdown
                       streaming={busy && i === messages.length - 1}
+                      workspacePaths={workspaceFiles.map((file) => file.path)}
+                      onOpenWorkspaceFile={openWorkspacePath}
                     >
                       {m.content || "▍"}
                     </ReactMarkdown>
                   ) : (
-                    m.content
+                    <WorkspaceMentionText
+                      workspacePaths={workspaceFiles.map((file) => file.path)}
+                      onOpenWorkspaceFile={openWorkspacePath}
+                    >
+                      {m.content}
+                    </WorkspaceMentionText>
                   )}
                   {m.role === "assistant" &&
                     m.content &&
@@ -2495,11 +2592,39 @@ function App() {
           onDragLeave={onComposerDragLeave}
           onDrop={onComposerDrop}
         >
-          {draggingFiles && (
+          {showScrollToBottom && (
+            <button
+              type="button"
+              className="scroll-to-bottom"
+              aria-label="跳转到最新消息"
+              title="跳转到最新消息"
+              onClick={scrollMessagesToBottom}
+            >
+              <FontAwesomeIcon icon={faArrowDown} />
+            </button>
+          )}
+          {draggingFiles && uploadTarget !== "composer" && (
             <div className="composer-drop-overlay" aria-hidden="true">
               <FontAwesomeIcon icon={faCloudArrowUp} />
               <b>松开以上传</b>
               <span>支持文件和图片，单个最大 500MB</span>
+            </div>
+          )}
+          {uploadTarget === "composer" && uploadProgress != null && (
+            <div className="composer-upload-progress" role="status">
+              <span
+                className="upload-progress-ring"
+                style={
+                  { "--upload-progress": uploadProgress } as React.CSSProperties
+                }
+                aria-label={`上传进度 ${uploadProgress}%`}
+              >
+                <i>{uploadProgress}</i>
+              </span>
+              <span className="composer-upload-copy">
+                <b title={uploadLabel}>{uploadLabel}</b>
+                <small>正在上传到工作区</small>
+              </span>
             </div>
           )}
           {pendingQuestion && (
@@ -2703,6 +2828,44 @@ function App() {
               )}
             </div>
           )}
+          {attachments.length > 0 && (
+            <div className="attachment-list" aria-label="已上传附件">
+              {attachments.map((attachment) => {
+                const image = IMAGE_ATTACHMENT_PATTERN.test(attachment.name);
+                return (
+                  <div
+                    className={`attachment-chip${image ? " image" : ""}`}
+                    key={attachment.path}
+                    title={attachment.name}
+                  >
+                    {image ? (
+                      <img
+                        src={workspacePreviewUrl(
+                          attachment.path,
+                          me.isRoot ? me.username : "",
+                        )}
+                        alt={attachment.name}
+                      />
+                    ) : (
+                      <span className="attachment-file-icon">📎</span>
+                    )}
+                    <span className="attachment-name">{attachment.name}</span>
+                    <button
+                      type="button"
+                      aria-label={`移除 ${attachment.name}`}
+                      onClick={() =>
+                        setAttachments((items) =>
+                          items.filter((item) => item.path !== attachment.path),
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <div className="composer-input-wrap">
             <div
               className="composer-input-highlight"
@@ -2814,26 +2977,6 @@ function App() {
               disabled={viewingForeignSession}
             />
           </div>
-          {attachments.length > 0 && (
-            <div className="attachment-list">
-              {attachments.map((attachment) => (
-                <span className="attachment-chip" key={attachment.path}>
-                  <span>📎 {attachment.name}</span>
-                  <button
-                    type="button"
-                    aria-label={`移除 ${attachment.name}`}
-                    onClick={() =>
-                      setAttachments((items) =>
-                        items.filter((item) => item.path !== attachment.path),
-                      )
-                    }
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
           <div className="composer-actions">
             <input
               ref={fileInputRef}
@@ -3491,8 +3634,50 @@ function WorkspaceFileTree({
   onDropFiles: (event: React.DragEvent, directory: string) => void;
 }) {
   const root = buildFileTree(files, directories);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const itemPositionsRef = useRef<Map<string, DOMRect>>(new Map());
+  useLayoutEffect(() => {
+    const tree = treeRef.current;
+    if (!tree) return;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const previousPositions = itemPositionsRef.current;
+    const nextPositions = new Map<string, DOMRect>();
+    tree
+      .querySelectorAll<HTMLElement>("[data-workspace-tree-path]")
+      .forEach((item) => {
+        const path = item.dataset.workspaceTreePath;
+        if (!path) return;
+        const nextPosition = item.getBoundingClientRect();
+        nextPositions.set(path, nextPosition);
+        if (reduceMotion || !nextPosition.width || !nextPosition.height) return;
+        const previousPosition = previousPositions.get(path);
+        if (!previousPosition) {
+          if (previousPositions.size)
+            item.animate(
+              [
+                { opacity: 0, transform: "translateY(-5px)" },
+                { opacity: 1, transform: "translateY(0)" },
+              ],
+              { duration: 180, easing: "ease-out" },
+            );
+          return;
+        }
+        const offset = previousPosition.top - nextPosition.top;
+        if (Math.abs(offset) < 1) return;
+        item.animate(
+          [
+            { transform: `translateY(${offset}px)` },
+            { transform: "translateY(0)" },
+          ],
+          { duration: 190, easing: "cubic-bezier(0.2, 0.75, 0.25, 1)" },
+        );
+      });
+    itemPositionsRef.current = nextPositions;
+  }, [files, directories]);
   return (
-    <div className="file-tree">
+    <div className="file-tree" ref={treeRef}>
       {pendingEntry?.directory === "" && (
         <WorkspaceNewEntry
           entry={pendingEntry}
@@ -3667,6 +3852,7 @@ function WorkspaceDirectory({
   return (
     <details
       className={`file-directory${dropDirectory === node.path ? " drop-target" : ""}`}
+      data-workspace-tree-path={`directory:${node.path}`}
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
@@ -3834,6 +4020,7 @@ function WorkspaceFileRow({
     <button
       type="button"
       className={`workspace-file${active ? " active" : ""}${clipboardOperation ? ` clipboard-${clipboardOperation}` : ""}`}
+      data-workspace-tree-path={`file:${file.path}`}
       title={`${file.path} · ${formatFileSize(file.size)}`}
       onClick={() => onOpenFile(file)}
       onContextMenu={(event) => onContextMenu(event, file)}
