@@ -5,13 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const uiMcpPath = fileURLToPath(new URL("./ui-mcp.mjs", import.meta.url));
-const uiMcpConfig = JSON.stringify({
-  mcpServers: {
-    ui: { command: process.execPath, args: [uiMcpPath] },
-  },
-});
 const webUiSystemPrompt = `You are running inside a non-interactive Claude Code Web UI.
 When you need clarification or a decision from the user, call mcp__ui__ask_user with structured questions and then stop the turn. Never call AskUserQuestion or SendUserMessage because they are unavailable in print mode.
+When the user asks to create, view, edit, enable, pause, run, or delete a scheduled task, use the mcp__ui__*_scheduled_task tools. These tools are the source of truth for CloudInk's scheduled-task page. Never use system cron, crontab, or ad-hoc background scripts for this purpose.
 Never call ExitPlanMode. In plan mode, present the completed plan in your response and stop normally; the Web UI manages mode transitions.`;
 
 export function detectClaudeModel(cwd: string, timeoutMs = 30_000) {
@@ -255,9 +251,16 @@ export function runClaude(opts: {
   resume: boolean;
   permissionMode: "auto" | "plan" | "manual" | "acceptEdits";
   model?: string;
+  authToken: string;
+  apiBaseUrl: string;
   signal: AbortSignal;
   tools?: string;
 }) {
+  const uiMcpConfig = JSON.stringify({
+    mcpServers: {
+      ui: { command: process.execPath, args: [uiMcpPath] },
+    },
+  });
   const args = [
     "-p",
     opts.prompt,
@@ -272,7 +275,15 @@ export function runClaude(opts: {
     "--permission-mode",
     opts.permissionMode,
     "--allowed-tools",
-    [process.env.CLAUDE_ALLOWED_TOOLS || "Bash", "mcp__ui__ask_user"].join(","),
+    [
+      process.env.CLAUDE_ALLOWED_TOOLS || "Bash",
+      "mcp__ui__ask_user",
+      "mcp__ui__list_scheduled_tasks",
+      "mcp__ui__create_scheduled_task",
+      "mcp__ui__update_scheduled_task",
+      "mcp__ui__run_scheduled_task",
+      "mcp__ui__delete_scheduled_task",
+    ].join(","),
     "--tools",
     opts.tools ?? "default",
   ];
@@ -282,7 +293,11 @@ export function runClaude(opts: {
   else args.push("--session-id", opts.sessionId);
   const child = spawn(process.env.CLAUDE_CLI_PATH || "claude", args, {
     cwd: opts.cwd,
-    env: process.env,
+    env: {
+      ...process.env,
+      CLOUDINK_API_BASE_URL: opts.apiBaseUrl,
+      CLOUDINK_SESSION_TOKEN: opts.authToken,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   opts.signal.addEventListener("abort", () => child.kill("SIGTERM"), {

@@ -47,8 +47,10 @@ import {
   faWandMagicSparkles,
   faXmark,
   faHand,
+  faClock,
 } from "@fortawesome/free-solid-svg-icons";
 import ReactMarkdown, { WorkspaceMentionText } from "./MarkdownMessage";
+import ScheduledTasks from "./ScheduledTasks";
 import type { OpenWorkspaceFile } from "./WorkspaceEditor";
 import "./styles.css";
 import "./chat-layout.css";
@@ -57,6 +59,7 @@ import "./activity.css";
 import "./composer.css";
 import "./workspace-editor.css";
 import "./minimax-theme.css";
+import "./scheduled-tasks.css";
 type Session = {
   id: string;
   title: string;
@@ -498,7 +501,12 @@ function App() {
     [slashItemsLoading, setSlashItemsLoading] = useState(false),
     [showModeMenu, setShowModeMenu] = useState(false),
     [showModelMenu, setShowModelMenu] = useState(false),
-    [sidebarView, setSidebarView] = useState<"sessions" | "files">("sessions"),
+    [sidebarView, setSidebarView] = useState<
+      "sessions" | "files" | "schedules"
+    >("sessions"),
+    [scheduledSessionTitle, setScheduledSessionTitle] = useState(""),
+    [scheduleSidebarHost, setScheduleSidebarHost] =
+      useState<HTMLDivElement | null>(null),
     [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth),
     [workspaceWidth, setWorkspaceWidth] = useState(() => {
       const saved = Number(localStorage.getItem("claude-ui-workspace-width"));
@@ -947,8 +955,10 @@ function App() {
       try {
         const run = (await api(`/sessions/${active}/run`)) as {
           running: boolean;
+          title?: string;
         };
         if (disposed) return;
+        if (!activeSession && run.title) setScheduledSessionTitle(run.title);
         setBusy(run.running);
         if (run.running) {
           const items = (await api(
@@ -1004,6 +1014,8 @@ function App() {
     setError("");
     setShowSlashMenu(false);
     setShowModeMenu(false);
+    setScheduledSessionTitle("");
+    setSidebarView("sessions");
     setMobileSessionsOpen(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
@@ -1907,6 +1919,21 @@ function App() {
             <FontAwesomeIcon icon={faFolderTree} aria-hidden="true" />
             <span className="sidebar-tab-label">文件</span>
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sidebarView === "schedules"}
+            className={sidebarView === "schedules" ? "active" : ""}
+            title="定时任务"
+            onClick={() => {
+              setSidebarView("schedules");
+              setSidebarCollapsed(false);
+              setMobileSessionsOpen(false);
+            }}
+          >
+            <FontAwesomeIcon icon={faClock} aria-hidden="true" />
+            <span className="sidebar-tab-label">定时</span>
+          </button>
         </div>
         {sidebarView === "sessions" ? (
           <nav aria-label="历史对话">
@@ -1941,7 +1968,7 @@ function App() {
                 ))
               : sessions.map(renderSession)}
           </nav>
-        ) : (
+        ) : sidebarView === "files" ? (
           <div
             className={`workspace-browser${draggingWorkspaceFiles ? " dragging-files" : ""}`}
             role="tabpanel"
@@ -2088,6 +2115,12 @@ function App() {
               </div>
             )}
           </div>
+        ) : (
+          <div
+            className="schedule-sidebar-host"
+            role="tabpanel"
+            ref={setScheduleSidebarHost}
+          />
         )}
         {me.isRoot && showApprovalPanel && (
           <section
@@ -2518,7 +2551,23 @@ function App() {
           }}
         />
       )}
-      <section className="chat">
+      {sidebarView === "schedules" && (
+        <ScheduledTasks
+          modelOptions={modelOptions}
+          currentModel={currentModel}
+          sidebarContainer={scheduleSidebarHost}
+          onOpenSidebar={() => setMobileSessionsOpen(true)}
+          onOpenRun={(sessionId, title) => {
+            setScheduledSessionTitle(title);
+            setSidebarView("sessions");
+            setMobileSessionsOpen(false);
+            navigateToSession(sessionId);
+          }}
+        />
+      )}
+      <section
+        className={`chat${sidebarView === "schedules" ? " schedule-hidden" : ""}`}
+      >
         <header>
           <button
             type="button"
@@ -2530,7 +2579,9 @@ function App() {
             <FontAwesomeIcon icon={faBars} />
           </button>
           <div className="chat-heading">
-            {sessions.find((s) => s.id === active)?.title || "新对话"}
+            {sessions.find((s) => s.id === active)?.title ||
+              scheduledSessionTitle ||
+              "新对话"}
           </div>
           <button
             type="button"

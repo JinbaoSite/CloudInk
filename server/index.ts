@@ -10,6 +10,13 @@ import { z } from "zod";
 import { db, workspaceRoot } from "./db.js";
 import { descriptionForSlashItem, discoverSlashDescriptions } from "./slash.js";
 import {
+  enqueueScheduledTask,
+  nextRunAt,
+  startTaskScheduler,
+  validateTimezone,
+  wakeTaskScheduler,
+} from "./scheduler.js";
+import {
   readEditableFile,
   removeWorkspaceEntry,
   resolveWorkspaceDirectory,
@@ -417,6 +424,163 @@ app.get("/api/config", requireAuth, async (_req, res) =>
     res.json({ model, models: configuredClaudeModels(model), appName }),
   ),
 );
+const scheduledTaskPayload = z.object({
+  name: z.string().trim().min(1).max(80),
+  prompt: z.string().trim().min(1).max(100000),
+  cronExpression: z.string().trim().min(5).max(120),
+  timezone: z.string().trim().min(1).max(80).default("Asia/Shanghai"),
+  model: z.string().trim().max(160).nullable().optional(),
+  mode: z.enum(["auto", "plan", "manual", "acceptEdits"]).default("auto"),
+  overlapPolicy: z.enum(["skip", "queue"]).default("skip"),
+  enabled: z.boolean().default(true),
+});
+app.get("/api/scheduled-tasks", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  return res.json(
+    db
+      .prepare(
+        `SELECT t.*,
+          (SELECT r.status FROM scheduled_task_runs r WHERE r.task_id=t.id ORDER BY r.created_at DESC LIMIT 1) last_status,
+          (SELECT r.finished_at FROM scheduled_task_runs r WHERE r.task_id=t.id ORDER BY r.created_at DESC LIMIT 1) last_finished_at,
+          (SELECT count(*) FROM scheduled_task_runs r WHERE r.task_id=t.id) run_count
+         FROM scheduled_tasks t WHERE t.user_id=? ORDER BY t.enabled DESC,t.next_run_at,t.created_at DESC`,
+      )
+      .all(uid),
+  );
+});
+app.post("/api/scheduled-tasks", requireAuth, (req, res) => {
+  const payload = scheduledTaskPayload.safeParse(req.body);
+  if (!payload.success)
+    return res.status(400).json({ error: "定时任务配置无效" });
+  if (!validateTimezone(payload.data.timezone))
+    return res.status(400).json({ error: "时区无效" });
+  let nextRun: string;
+  try {
+    nextRun = nextRunAt(payload.data.cronExpression, payload.data.timezone);
+  } catch (error) {
+    return res
+      .status(400)
+      .json({ error: `Cron 表达式无效：${(error as Error).message}` });
+  }
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO scheduled_tasks(id,user_id,name,prompt,cron_expression,timezone,model,
+     permission_mode,overlap_policy,enabled,next_run_at,created_at,updated_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  ).run(
+    id,
+    (req as AuthedRequest).userId,
+    payload.data.name,
+    payload.data.prompt,
+    payload.data.cronExpression,
+    payload.data.timezone,
+    payload.data.model || null,
+    payload.data.mode,
+    payload.data.overlapPolicy,
+    payload.data.enabled ? 1 : 0,
+    payload.data.enabled ? nextRun : null,
+    now,
+    now,
+  );
+  return res.status(201).json({ id, next_run_at: nextRun });
+});
+app.put("/api/scheduled-tasks/:id", requireAuth, (req, res) => {
+  const payload = scheduledTaskPayload.safeParse(req.body);
+  if (!payload.success)
+    return res.status(400).json({ error: "定时任务配置无效" });
+  const uid = (req as AuthedRequest).userId;
+  const task = db
+    .prepare("SELECT id FROM scheduled_tasks WHERE id=? AND user_id=?")
+    .get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: "定时任务不存在" });
+  let nextRun: string;
+  try {
+    nextRun = nextRunAt(payload.data.cronExpression, payload.data.timezone);
+  } catch (error) {
+    return res
+      .status(400)
+      .json({ error: `Cron 表达式无效：${(error as Error).message}` });
+  }
+  db.prepare(
+    `UPDATE scheduled_tasks SET name=?,prompt=?,cron_expression=?,timezone=?,model=?,
+     permission_mode=?,overlap_policy=?,enabled=?,next_run_at=?,updated_at=?
+     WHERE id=? AND user_id=?`,
+  ).run(
+    payload.data.name,
+    payload.data.prompt,
+    payload.data.cronExpression,
+    payload.data.timezone,
+    payload.data.model || null,
+    payload.data.mode,
+    payload.data.overlapPolicy,
+    payload.data.enabled ? 1 : 0,
+    payload.data.enabled ? nextRun : null,
+    new Date().toISOString(),
+    req.params.id,
+    uid,
+  );
+  wakeTaskScheduler();
+  return res.json({ id: req.params.id, next_run_at: nextRun });
+});
+app.post("/api/scheduled-tasks/:id/run", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const task = db
+    .prepare("SELECT id FROM scheduled_tasks WHERE id=? AND user_id=?")
+    .get(req.params.id, uid) as { id: string } | undefined;
+  if (!task) return res.status(404).json({ error: "定时任务不存在" });
+  try {
+    const run = enqueueScheduledTask(task.id);
+    wakeTaskScheduler();
+    return res.status(202).json(run);
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+});
+app.get("/api/scheduled-tasks/:id/runs", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const task = db
+    .prepare("SELECT id FROM scheduled_tasks WHERE id=? AND user_id=?")
+    .get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: "定时任务不存在" });
+  return res.json(
+    db
+      .prepare(
+        `SELECT r.*,s.title FROM scheduled_task_runs r
+         LEFT JOIN sessions s ON s.id=r.session_id
+         WHERE r.task_id=? ORDER BY r.created_at DESC LIMIT 100`,
+      )
+      .all(req.params.id),
+  );
+});
+app.delete("/api/scheduled-tasks/:id", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const task = db
+    .prepare("SELECT id FROM scheduled_tasks WHERE id=? AND user_id=?")
+    .get(req.params.id, uid);
+  if (!task) return res.status(404).json({ error: "定时任务不存在" });
+  const running = db
+    .prepare(
+      "SELECT 1 FROM scheduled_task_runs WHERE task_id=? AND status='running' LIMIT 1",
+    )
+    .get(req.params.id);
+  if (running)
+    return res.status(409).json({ error: "任务正在执行，暂时不能删除" });
+  const sessionIds = db
+    .prepare(
+      "SELECT session_id FROM scheduled_task_runs WHERE task_id=? AND session_id IS NOT NULL",
+    )
+    .all(req.params.id) as Array<{ session_id: string }>;
+  db.transaction(() => {
+    db.prepare("DELETE FROM scheduled_tasks WHERE id=? AND user_id=?").run(
+      req.params.id,
+      uid,
+    );
+    const deleteSession = db.prepare("DELETE FROM sessions WHERE id=?");
+    for (const row of sessionIds) deleteSession.run(row.session_id);
+  })();
+  return res.status(204).end();
+});
 function rootUser(req: express.Request) {
   return db
     .prepare("SELECT username FROM users WHERE id=?")
@@ -964,6 +1128,7 @@ app.get("/api/sessions", requireAuth, (req, res) => {
           .prepare(
             `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,u.username
            FROM sessions s JOIN users u ON u.id=s.user_id
+           WHERE NOT EXISTS (SELECT 1 FROM scheduled_task_runs r WHERE r.session_id=s.id)
            ORDER BY u.username,s.favorite DESC,s.updated_at DESC`,
           )
           .all()
@@ -971,7 +1136,9 @@ app.get("/api/sessions", requireAuth, (req, res) => {
           .prepare(
             `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,u.username
            FROM sessions s JOIN users u ON u.id=s.user_id
-           WHERE s.user_id=? ORDER BY s.favorite DESC,s.updated_at DESC`,
+           WHERE s.user_id=?
+             AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs r WHERE r.session_id=s.id)
+           ORDER BY s.favorite DESC,s.updated_at DESC`,
           )
           .all(uid);
   return res.json(sessions);
@@ -1031,13 +1198,14 @@ app.get("/api/sessions/:id/run", requireAuth, (req, res) => {
   const uid = (req as AuthedRequest).userId;
   const sessionId = String(req.params.id);
   const session = db
-    .prepare("SELECT id FROM sessions WHERE id=? AND user_id=?")
-    .get(req.params.id, uid);
+    .prepare("SELECT id,title FROM sessions WHERE id=? AND user_id=?")
+    .get(req.params.id, uid) as { id: string; title: string } | undefined;
   if (!session) return res.status(404).json({ error: "会话不存在" });
   const run = activeClaudeRuns.get(sessionId);
   return res.json({
     running: Boolean(run && run.userId === uid),
     startedAt: run?.userId === uid ? run.startedAt : null,
+    title: session.title,
   });
 });
 app.post("/api/sessions/:id/stop", requireAuth, (req, res) => {
@@ -1163,7 +1331,10 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     displayContent,
     now,
   );
-  if (count === 0)
+  const scheduledSession = db
+    .prepare("SELECT 1 FROM scheduled_task_runs WHERE session_id=? LIMIT 1")
+    .get(s.id);
+  if (count === 0 && !scheduledSession)
     db.prepare("UPDATE sessions SET title=?,updated_at=? WHERE id=?").run(
       displayContent.slice(0, 36),
       now,
@@ -1181,6 +1352,7 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   activeClaudeRuns.set(s.id, activeRun);
   const cwd = workspace;
   fs.mkdirSync(cwd, { recursive: true });
+  const claudeAuthToken = await tokenFor(uid);
   const child = runClaude({
     prompt,
     cwd,
@@ -1188,6 +1360,8 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     resume: count > 0 && !restartClaudeSession,
     permissionMode: body.data.mode,
     model: body.data.model,
+    authToken: claudeAuthToken,
+    apiBaseUrl: `http://127.0.0.1:${process.env.PORT || 3001}`,
     signal: abort.signal,
     tools: restartClaudeSession ? "" : undefined,
   });
@@ -1402,6 +1576,8 @@ if (process.env.NODE_ENV === "production") {
   app.use(express.static("dist"));
   app.get(/.*/, (_req, res) => res.sendFile(path.resolve("dist/index.html")));
 }
-app.listen(Number(process.env.PORT || 3001), () =>
-  console.log(`${appName}: http://localhost:${process.env.PORT || 3001}`),
-);
+const serverPort = Number(process.env.PORT || 3001);
+app.listen(serverPort, () => {
+  startTaskScheduler(serverPort);
+  console.log(`${appName}: http://localhost:${serverPort}`);
+});
