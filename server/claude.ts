@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,6 +65,45 @@ export function detectClaudeModel(cwd: string, timeoutMs = 30_000) {
     child.on("error", () => finish());
     child.on("close", () => finish());
   });
+}
+
+export type ClaudeModelOption = {
+  value: string;
+  description: string;
+};
+
+export function configuredClaudeModels(currentModel: string) {
+  const configuredEnvironment: Record<string, unknown> = {};
+  for (const settingsPath of [
+    path.join(os.homedir(), ".claude", "settings.json"),
+    path.join(process.cwd(), ".claude", "settings.json"),
+  ]) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as {
+        env?: Record<string, unknown>;
+      };
+      Object.assign(configuredEnvironment, settings.env);
+    } catch {}
+  }
+  const candidates: Array<[unknown, string]> = [
+    [currentModel, "当前默认模型"],
+    [process.env.CLAUDE_MODEL, "服务端指定模型"],
+    [configuredEnvironment.ANTHROPIC_MODEL, "默认模型"],
+    [configuredEnvironment.ANTHROPIC_DEFAULT_OPUS_MODEL, "高性能模型"],
+    [configuredEnvironment.ANTHROPIC_DEFAULT_SONNET_MODEL, "均衡模型"],
+    [configuredEnvironment.ANTHROPIC_DEFAULT_HAIKU_MODEL, "高速模型"],
+  ];
+  const seen = new Set<string>();
+  return candidates.reduce<ClaudeModelOption[]>(
+    (models, [value, description]) => {
+      if (typeof value !== "string" || !value.trim() || seen.has(value.trim()))
+        return models;
+      seen.add(value.trim());
+      models.push({ value: value.trim(), description });
+      return models;
+    },
+    [],
+  );
 }
 
 export type ClaudeEvent = { type: string; [key: string]: unknown };
@@ -213,6 +254,7 @@ export function runClaude(opts: {
   sessionId: string;
   resume: boolean;
   permissionMode: "auto" | "plan" | "manual" | "acceptEdits";
+  model?: string;
   signal: AbortSignal;
   tools?: string;
 }) {
@@ -234,7 +276,8 @@ export function runClaude(opts: {
     "--tools",
     opts.tools ?? "default",
   ];
-  if (process.env.CLAUDE_MODEL) args.push("--model", process.env.CLAUDE_MODEL);
+  const model = opts.model || process.env.CLAUDE_MODEL;
+  if (model) args.push("--model", model);
   if (opts.resume) args.push("--resume", opts.sessionId);
   else args.push("--session-id", opts.sessionId);
   const child = spawn(process.env.CLAUDE_CLI_PATH || "claude", args, {

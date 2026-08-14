@@ -198,6 +198,7 @@ const executionModes: Array<{
   },
 ];
 type SlashItem = { name: string; description: string };
+type ModelOption = { value: string; description: string };
 const DESKTOP_SIDEBAR_RAIL_WIDTH = 56;
 function localId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -476,6 +477,7 @@ function App() {
     [input, setInput] = useState(""),
     [mode, setMode] = useState<ExecutionMode>("auto"),
     [currentModel, setCurrentModel] = useState("CLI default"),
+    [modelOptions, setModelOptions] = useState<ModelOption[]>([]),
     [attachments, setAttachments] = useState<Attachment[]>([]),
     [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]),
     [workspaceDirectories, setWorkspaceDirectories] = useState<string[]>([]),
@@ -495,6 +497,7 @@ function App() {
     [dynamicSkills, setDynamicSkills] = useState<SlashItem[]>([]),
     [slashItemsLoading, setSlashItemsLoading] = useState(false),
     [showModeMenu, setShowModeMenu] = useState(false),
+    [showModelMenu, setShowModelMenu] = useState(false),
     [sidebarView, setSidebarView] = useState<"sessions" | "files">("sessions"),
     [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth),
     [workspaceWidth, setWorkspaceWidth] = useState(() => {
@@ -570,6 +573,8 @@ function App() {
   const inputHighlightRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const modeButtonRef = useRef<HTMLButtonElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+  const modelButtonRef = useRef<HTMLButtonElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const slashButtonRef = useRef<HTMLButtonElement>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
@@ -726,7 +731,16 @@ function App() {
         setMe(user);
         void load();
         void api("/config")
-          .then((config) => setCurrentModel(config.model))
+          .then((config) => {
+            const options = (config.models || []) as ModelOption[];
+            const savedModel = localStorage.getItem("cloudink-model");
+            setCurrentModel(
+              options.some((option) => option.value === savedModel)
+                ? savedModel!
+                : config.model,
+            );
+            setModelOptions(options);
+          })
           .catch(() => undefined);
       })
       .catch(() => setMe(null));
@@ -829,6 +843,30 @@ function App() {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [showModeMenu]);
+  useEffect(() => {
+    if (!showModelMenu) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        modelMenuRef.current?.contains(target) ||
+        modelButtonRef.current?.contains(target)
+      )
+        return;
+      setShowModelMenu(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowModelMenu(false);
+        modelButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showModelMenu]);
   useEffect(() => {
     if (!showSlashMenu) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -1560,6 +1598,7 @@ function App() {
         body: JSON.stringify({
           content: text,
           mode,
+          model: currentModel,
           attachments: sentAttachments,
         }),
       });
@@ -2771,6 +2810,45 @@ function App() {
               ))}
             </div>
           )}
+          {showModelMenu && (
+            <div
+              className="mode-menu model-menu"
+              ref={modelMenuRef}
+              role="listbox"
+              aria-label="可用模型"
+            >
+              <div className="mode-menu-heading">
+                <span>选择模型</span>
+                <small>应用于下一条消息</small>
+              </div>
+              {modelOptions.map((option) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={option.value === currentModel}
+                  className={option.value === currentModel ? "active" : ""}
+                  key={option.value}
+                  onClick={() => {
+                    setCurrentModel(option.value);
+                    localStorage.setItem("cloudink-model", option.value);
+                    setShowModelMenu(false);
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                >
+                  <span className="mode-icon" aria-hidden="true">
+                    <FontAwesomeIcon icon={faDatabase} />
+                  </span>
+                  <span className="mode-copy">
+                    <b>{option.value}</b>
+                    <small>{option.description}</small>
+                  </span>
+                  {option.value === currentModel && (
+                    <span className="mode-check">✓</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
           {showSlashMenu && (
             <div
               className="slash-menu"
@@ -3086,6 +3164,7 @@ function App() {
                   setShowSlashMenu(true);
                   void refreshSlashItems();
                   setShowModeMenu(false);
+                  setShowModelMenu(false);
                   requestAnimationFrame(() => textareaRef.current?.focus());
                 }}
               >
@@ -3093,12 +3172,27 @@ function App() {
               </button>
             </div>
             <div className="composer-actions-right">
-              <span
-                className="model-indicator"
+              <button
+                ref={modelButtonRef}
+                type="button"
+                className="mode-picker model-picker"
                 title={`当前模型：${currentModel}`}
+                aria-label={`选择模型，当前为 ${currentModel}`}
+                aria-expanded={showModelMenu}
+                disabled={viewingForeignSession || busy}
+                onClick={() => {
+                  setShowModelMenu((visible) => !visible);
+                  setShowModeMenu(false);
+                  setShowSlashMenu(false);
+                }}
               >
-                {currentModel}
-              </span>
+                <FontAwesomeIcon
+                  className="mode-picker-icon"
+                  icon={faDatabase}
+                  aria-hidden="true"
+                />
+                <span className="model-picker-label">{currentModel}</span>
+              </button>
               <button
                 ref={modeButtonRef}
                 type="button"
@@ -3108,6 +3202,7 @@ function App() {
                 aria-expanded={showModeMenu}
                 onClick={() => {
                   setShowModeMenu((visible) => !visible);
+                  setShowModelMenu(false);
                   setShowSlashMenu(false);
                 }}
               >

@@ -703,16 +703,19 @@
   cursor: pointer;
   font-size: 12px;
 }
-.model-indicator {
-  display: block;
+.composer .model-picker {
   max-width: 150px;
-  padding: 0 4px;
+}
+
+.model-picker-label {
+  min-width: 0;
   overflow: hidden;
-  color: #938d83;
-  font-size: 11px;
-  line-height: 32px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer .model-picker:not(:hover):not(:focus) {
+  color: #7b756c;
 }
 
 .composer .mode-picker:hover,

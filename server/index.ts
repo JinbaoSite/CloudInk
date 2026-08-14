@@ -24,6 +24,7 @@ import {
 } from "./auth.js";
 import {
   activitiesFromEvent,
+  configuredClaudeModels,
   detectClaudeCapabilities,
   detectClaudeModel,
   questionsFromEvent,
@@ -412,10 +413,9 @@ app.post("/api/me/password", requireAuth, async (req, res) => {
   return res.status(204).end();
 });
 app.get("/api/config", requireAuth, async (_req, res) =>
-  res.json({
-    model: await detectedModel,
-    appName,
-  }),
+  detectedModel.then((model) =>
+    res.json({ model, models: configuredClaudeModels(model), appName }),
+  ),
 );
 function rootUser(req: express.Request) {
   return db
@@ -1071,6 +1071,7 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
         .max(10)
         .default([]),
       mode: z.enum(["auto", "plan", "manual", "acceptEdits"]).default("auto"),
+      model: z.string().trim().min(1).max(160).regex(/^\S+$/).optional(),
     })
     .safeParse(req.body);
   if (
@@ -1186,6 +1187,7 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     sessionId: claudeSessionId,
     resume: count > 0 && !restartClaudeSession,
     permissionMode: body.data.mode,
+    model: body.data.model,
     signal: abort.signal,
     tools: restartClaudeSession ? "" : undefined,
   });
