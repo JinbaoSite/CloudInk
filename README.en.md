@@ -142,6 +142,7 @@ In development, Vite proxies `/api` to Express. Register an account on first lau
 ```dotenv
 PORT=3001
 WEB_PORT=80
+COOKIE_SECURE=false
 APP_NAME=CloudInk
 ROOT_EMAIL=root@cloudink.com
 ROOT_PASSWORD=replace-with-a-strong-root-password
@@ -157,6 +158,7 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | ---------------------- | --------------------------------------------------- | ----------------------- |
 | `PORT`                 | Express API port                                    | `3001`                  |
 | `WEB_PORT`             | Vite Web UI port                                    | `80`                    |
+| `COOKIE_SECURE`        | Send the login cookie over HTTPS only               | `false`                 |
 | `APP_NAME`             | Brand shown on login, sidebar, and browser title    | `CloudInk`              |
 | `ROOT_EMAIL`           | Root administrator sign-in email                    | `root@cloudink.local`   |
 | `ROOT_PASSWORD`        | Strong password used for initial Root creation      | Root is not created     |

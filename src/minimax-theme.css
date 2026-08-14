@@ -415,7 +415,7 @@ body.resizing-workspace .workspace-resizer::after {
 }
 
 .user .bubble {
-  border: 1px solid #d5e3ee;
+  border: 0;
   background: #eef6fb;
   color: #304b60;
   border-radius: 14px 14px 4px 14px;
@@ -1083,6 +1083,23 @@ body.resizing-workspace .workspace-resizer::after {
 .response-actions button:hover {
   background: #f0f1f2;
   color: var(--mm-ink);
+}
+
+article.user {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+.user-message-actions {
+  margin-top: 0;
+  background: transparent;
+  opacity: 0.72;
+}
+
+.user-message-actions button,
+.user-message-actions button:hover {
+  background: transparent;
 }
 
 .response-metrics i {

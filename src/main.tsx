@@ -77,6 +77,7 @@ type Message = {
   id?: string;
   role: "user" | "assistant" | "activity" | "metrics";
   content: string;
+  created_at?: string;
   metrics?: ResponseMetrics;
 };
 type ResponseMetrics = {
@@ -1541,6 +1542,7 @@ function App() {
       {
         id: userMessageId,
         role: "user",
+        created_at: new Date().toISOString(),
         content: [
           text,
           ...sentAttachments.map((attachment) => `📎 ${attachment.name}`),
@@ -2543,7 +2545,7 @@ function App() {
               );
             }
             if (m.role === "metrics") return null;
-            const messageKey = m.id || `assistant-${i}`;
+            const messageKey = m.id || `${m.role}-${i}`;
             const streamingThisMessage =
               m.role === "assistant" && busy && i === messages.length - 1;
             return (
@@ -2599,9 +2601,28 @@ function App() {
                           <FontAwesomeIcon icon={faRotateRight} />
                           <span>重试</span>
                         </button>
+                        {m.created_at && <MessageTime value={m.created_at} />}
                       </div>
                     )}
                 </div>
+                {m.role === "user" && (
+                  <div className="response-actions user-message-actions">
+                    <button
+                      type="button"
+                      title="复制消息"
+                      aria-label="复制消息"
+                      onClick={() => void copyResponse(m.content, messageKey)}
+                    >
+                      <FontAwesomeIcon
+                        icon={copiedMessageId === messageKey ? faCheck : faCopy}
+                      />
+                      <span>
+                        {copiedMessageId === messageKey ? "已复制" : "复制"}
+                      </span>
+                    </button>
+                    {m.created_at && <MessageTime value={m.created_at} />}
+                  </div>
+                )}
               </article>
             );
           })}
@@ -3557,6 +3578,30 @@ function ResponseMetricsLabel({ metrics }: { metrics: ResponseMetrics }) {
       <i aria-hidden="true" />
       <span>{formatTokenCount(totalTokens)} tokens</span>
     </span>
+  );
+}
+
+function MessageTime({ value }: { value: string }) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return (
+    <time
+      className="message-time"
+      dateTime={value}
+      title={date.toLocaleString("zh-CN")}
+    >
+      {date
+        .toLocaleString("zh-CN", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        })
+        .replaceAll("/", "-")}
+    </time>
   );
 }
 

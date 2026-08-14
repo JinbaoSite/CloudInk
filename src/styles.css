@@ -1583,8 +1583,19 @@ article {
   transition: opacity 0.15s ease;
 }
 .assistant .bubble:hover .response-actions,
+.user .bubble:hover .response-actions,
 .response-actions:focus-within {
   opacity: 1;
+}
+.user-message-actions {
+  justify-content: flex-end;
+}
+.message-time {
+  padding: 0 5px;
+  color: #99938a;
+  font-size: 11px;
+  line-height: 32px;
+  white-space: nowrap;
 }
 .response-actions button {
   display: inline-flex;

@@ -141,6 +141,7 @@ npm run dev
 ```dotenv
 PORT=3001
 WEB_PORT=80
+COOKIE_SECURE=false
 APP_NAME=CloudInk
 ROOT_EMAIL=root@cloudink.com
 ROOT_PASSWORD=replace-with-a-strong-root-password
@@ -156,6 +157,7 @@ WORKSPACE_DIR=/absolute/path/to/workspaces
 | ---------------------- | ---------------------------------- | ----------------------- |
 | `PORT`                 | Express API 端口                   | `3001`                  |
 | `WEB_PORT`             | Vite Web UI 端口                   | `80`                    |
+| `COOKIE_SECURE`        | 仅通过 HTTPS 发送登录 Cookie       | `false`                 |
 | `APP_NAME`             | 登录页、侧边栏与浏览器标题的品牌名 | `CloudInk`              |
 | `ROOT_EMAIL`           | Root 管理员登录邮箱                | `root@cloudink.local`   |
 | `ROOT_PASSWORD`        | 首次创建 Root 管理员使用的强密码   | 不创建 Root             |

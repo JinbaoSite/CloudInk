@@ -20,6 +20,7 @@ export default defineConfig(({ mode }) => {
       host: "0.0.0.0",
       port: webPort,
       strictPort: true,
+      allowedHosts: true,
       // User and Claude activity writes workspace files frequently. They are
       // runtime data, not frontend source, and must never trigger a page reload.
       watch: { ignored: ["**/data/**", `${workspaceDirectory}/**`] },
