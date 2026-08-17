@@ -488,6 +488,83 @@
   background: #fff;
   box-shadow: 0 24px 70px rgb(28 34 39 / 18%);
 }
+.schedule-confirm {
+  width: min(430px, 100%);
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 13px;
+  padding: 20px;
+  border: 1px solid #e1e4e6;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgb(28 34 39 / 18%);
+}
+.schedule-confirm-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: #f8eaea;
+  color: #a85d5d;
+  font-size: 20px;
+  font-weight: 500;
+}
+.schedule-confirm-copy {
+  min-width: 0;
+}
+.schedule-confirm-copy h2 {
+  color: #353c42;
+  font-size: 15px;
+}
+.schedule-confirm-copy p {
+  margin-top: 8px;
+  color: #687078;
+  font-size: 11px;
+  line-height: 1.65;
+}
+.schedule-confirm-copy p b {
+  color: #454d54;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.schedule-confirm-copy > span {
+  display: block;
+  margin-top: 6px;
+  color: #a15d5d;
+  font-size: 10px;
+}
+.schedule-confirm footer {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 5px;
+  padding-top: 14px;
+  border-top: 1px solid #eceeef;
+}
+.schedule-confirm footer button {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid #dfe2e4;
+  border-radius: 8px;
+  background: #fff;
+  color: #626a71;
+  font-size: 11px;
+}
+.schedule-confirm footer .schedule-confirm-delete {
+  border-color: #e7c4c4;
+  background: #f7e7e7;
+  color: #934f4f;
+  font-weight: 600;
+}
+.schedule-confirm footer .schedule-confirm-delete:hover:not(:disabled) {
+  border-color: #ddb0b0;
+  background: #f1dada;
+}
+.schedule-confirm footer button:disabled {
+  opacity: 0.55;
+}
 .schedule-form header {
   display: flex;
   align-items: flex-start;

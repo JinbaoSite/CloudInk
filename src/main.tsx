@@ -3041,7 +3041,9 @@ function App() {
                         alt={attachment.name}
                       />
                     ) : (
-                      <span className="attachment-file-icon">📎</span>
+                      <span className="attachment-file-icon" aria-hidden="true">
+                        <FontAwesomeIcon icon={fileTypeIcon(attachment.name)} />
+                      </span>
                     )}
                     <span className="attachment-name">{attachment.name}</span>
                     <button
@@ -3053,7 +3055,7 @@ function App() {
                         )
                       }
                     >
-                      ×
+                      <FontAwesomeIcon icon={faXmark} aria-hidden="true" />
                     </button>
                   </div>
                 );

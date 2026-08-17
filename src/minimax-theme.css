@@ -542,7 +542,8 @@ body.resizing-workspace .workspace-resizer::after {
 }
 
 .composer textarea {
-  color: var(--mm-ink);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .composer textarea::placeholder {
@@ -672,7 +673,7 @@ body.resizing-workspace .workspace-resizer::after {
   min-width: 150px;
   max-width: 220px;
   height: 46px;
-  grid-template-columns: 26px minmax(0, 1fr) 20px;
+  grid-template-columns: 26px minmax(0, 1fr) 24px;
   align-items: center;
   gap: 7px;
   padding: 5px 5px 5px 8px;
@@ -706,8 +707,14 @@ body.resizing-workspace .workspace-resizer::after {
   height: 26px;
   place-items: center;
   border-radius: 6px;
-  background: #eceef0;
-  font-size: 12px;
+  border: 1px solid #dde2e5;
+  background: #f0f3f5;
+  color: #687680;
+}
+
+.attachment-file-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 .attachment-name {
@@ -731,7 +738,26 @@ body.resizing-workspace .workspace-resizer::after {
 }
 
 .attachment-chip button {
-  color: #777d84;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border-radius: 7px;
+  background: #edf1f3;
+  color: #667680;
+  line-height: 1;
+}
+
+.attachment-chip button svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+}
+
+.attachment-chip button:hover {
+  background: #dfe8ed;
+  color: #3f5968;
 }
 
 .attachment-chip.image button {
@@ -739,14 +765,19 @@ body.resizing-workspace .workspace-resizer::after {
   z-index: 1;
   top: 5px;
   right: 5px;
-  border: 1px solid rgb(255 255 255 / 55%);
+  width: 24px;
+  height: 24px;
+  border: 1px solid #d5e1e8;
   border-radius: 50%;
-  background: rgb(24 30 37 / 62%);
-  color: white;
+  background: rgb(250 252 253 / 94%);
+  box-shadow: 0 2px 8px rgb(45 68 82 / 16%);
+  color: #536b79;
 }
 
 .attachment-chip.image button:hover {
-  background: rgb(24 30 37 / 82%);
+  border-color: #bfd1dc;
+  background: #e8f1f6;
+  color: #31566c;
 }
 
 .workspace-drop-overlay {

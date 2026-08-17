@@ -173,6 +173,8 @@ export default function ScheduledTasks({
   const [editingId, setEditingId] = useState("");
   const [draft, setDraft] = useState(() => emptyDraft(currentModel));
   const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ScheduledTask | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
   const selectedTask = tasks.find((task) => task.id === selectedId) || null;
 
@@ -506,19 +508,7 @@ export default function ScheduledTasks({
               <button
                 type="button"
                 className="schedule-delete"
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `删除定时任务“${selectedTask.name}”及全部执行记录？`,
-                    )
-                  )
-                    return;
-                  void taskApi(`/scheduled-tasks/${selectedTask.id}`, {
-                    method: "DELETE",
-                  })
-                    .then(() => loadTasks(false))
-                    .catch((error) => setNotice((error as Error).message));
-                }}
+                onClick={() => setDeleteTarget(selectedTask)}
               >
                 删除任务及执行记录
               </button>
@@ -758,6 +748,64 @@ export default function ScheduledTasks({
               </button>
             </footer>
           </form>
+        </div>
+      )}
+      {deleteTarget && (
+        <div
+          className="schedule-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deleting)
+              setDeleteTarget(null);
+          }}
+        >
+          <section
+            className="schedule-confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="schedule-delete-title"
+            aria-describedby="schedule-delete-description"
+          >
+            <div className="schedule-confirm-icon" aria-hidden="true">
+              ×
+            </div>
+            <div className="schedule-confirm-copy">
+              <h2 id="schedule-delete-title">删除定时任务？</h2>
+              <p id="schedule-delete-description">
+                任务 <b>“{deleteTarget.name}”</b>{" "}
+                将被永久删除，同时清除全部执行记录和关联的聊天内容。
+              </p>
+              <span>此操作无法撤销。</span>
+            </div>
+            <footer>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="schedule-confirm-delete"
+                disabled={deleting}
+                onClick={() => {
+                  setDeleting(true);
+                  setNotice("");
+                  void taskApi(`/scheduled-tasks/${deleteTarget.id}`, {
+                    method: "DELETE",
+                  })
+                    .then(async () => {
+                      setDeleteTarget(null);
+                      await loadTasks(false);
+                    })
+                    .catch((error) => setNotice((error as Error).message))
+                    .finally(() => setDeleting(false));
+                }}
+              >
+                {deleting ? "删除中…" : "确认删除"}
+              </button>
+            </footer>
+          </section>
         </div>
       )}
       {notice && !formOpen && (

@@ -292,9 +292,17 @@
   padding: 3px 2px 8px;
   border: 0;
   font: inherit;
-  line-height: normal;
+  font-kerning: none;
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  line-height: 1.5;
+  tab-size: 4;
+  text-align: start;
+  text-indent: 0;
+  word-spacing: 0;
   white-space: pre-wrap;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .composer textarea {
@@ -306,7 +314,13 @@
   background: transparent;
   color: transparent;
   caret-color: #282621;
+  scrollbar-width: none;
   -webkit-text-fill-color: transparent;
+}
+
+.composer textarea::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .composer textarea::placeholder {
