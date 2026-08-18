@@ -454,9 +454,9 @@ function Login({ onDone, appName }: { onDone: () => void; appName: string }) {
 }
 function App() {
   const defaultSidebarWidth = () =>
-    Math.max(180, Math.min(520, Math.round(window.innerWidth * 0.15)));
+    Math.max(180, Math.min(520, Math.round(window.innerWidth * 0.2)));
   const defaultWorkspaceWidth = () =>
-    Math.max(360, Math.round(window.innerWidth * 0.6));
+    Math.max(320, Math.round(window.innerWidth * 0.5));
   const initialSidebarWidth = () => {
     const saved = Number(localStorage.getItem("claude-ui-sidebar-width"));
     return Number.isFinite(saved) && saved >= 180 && saved <= 520
@@ -2456,7 +2456,12 @@ function App() {
           }}
           onPointerMove={(event) => {
             if (!resizingSidebarRef.current) return;
-            const maximum = Math.min(520, window.innerWidth - 360);
+            const maximum = Math.min(
+              520,
+              openWorkspaceFiles.length
+                ? window.innerWidth * 0.7 - 240
+                : window.innerWidth - 360,
+            );
             setSidebarWidth(Math.max(180, Math.min(maximum, event.clientX)));
           }}
           onPointerUp={(event) => {
@@ -2475,9 +2480,15 @@ function App() {
             const step = event.shiftKey ? 40 : 10;
             const direction = event.key === "ArrowLeft" ? -1 : 1;
             setSidebarWidth((current) => {
+              const maximum = Math.min(
+                520,
+                openWorkspaceFiles.length
+                  ? window.innerWidth * 0.7 - 240
+                  : window.innerWidth - 360,
+              );
               const next = Math.max(
                 180,
-                Math.min(520, current + direction * step),
+                Math.min(maximum, current + direction * step),
               );
               localStorage.setItem("claude-ui-sidebar-width", String(next));
               return next;
@@ -2527,14 +2538,9 @@ function App() {
             const sidebarOffset = sidebarCollapsed
               ? DESKTOP_SIDEBAR_RAIL_WIDTH
               : sidebarWidth;
+            const maximum = window.innerWidth * 0.7 - sidebarOffset;
             setWorkspaceWidth(
-              Math.max(
-                360,
-                Math.min(
-                  window.innerWidth - sidebarOffset - 280,
-                  event.clientX - sidebarOffset,
-                ),
-              ),
+              Math.max(240, Math.min(maximum, event.clientX - sidebarOffset)),
             );
           }}
           onPointerUp={(event) => {
@@ -2545,8 +2551,18 @@ function App() {
           onKeyDown={(event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
+            const sidebarOffset = sidebarCollapsed
+              ? DESKTOP_SIDEBAR_RAIL_WIDTH
+              : sidebarWidth;
+            const maximum = window.innerWidth * 0.7 - sidebarOffset;
             setWorkspaceWidth((current) =>
-              Math.max(360, current + (event.key === "ArrowRight" ? 20 : -20)),
+              Math.max(
+                240,
+                Math.min(
+                  maximum,
+                  current + (event.key === "ArrowRight" ? 20 : -20),
+                ),
+              ),
             );
           }}
         />

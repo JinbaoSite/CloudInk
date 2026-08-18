@@ -101,20 +101,17 @@ textarea {
 .shell {
   height: 100vh;
   display: grid;
-  grid-template-columns: var(--sidebar-width, 15vw) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 20vw) minmax(0, 1fr);
   position: relative;
 }
 .shell.workspace-open {
   grid-template-columns:
-    var(--sidebar-width, 15vw)
+    var(--sidebar-width, 20vw)
     minmax(
-      360px,
-      min(
-        var(--workspace-width, 60vw),
-        calc(100vw - var(--sidebar-width, 15vw) - 280px)
-      )
+      0,
+      min(var(--workspace-width, 50vw), calc(70vw - var(--sidebar-width, 20vw)))
     )
-    minmax(280px, 1fr);
+    minmax(30vw, 1fr);
 }
 .sidebar-collapse {
   display: grid;
@@ -142,7 +139,7 @@ textarea {
   z-index: 20;
   top: 0;
   bottom: 0;
-  left: calc(var(--sidebar-width, 15vw) - 4px);
+  left: calc(var(--sidebar-width, 20vw) - 4px);
   display: flex;
   width: 8px;
   align-items: center;
@@ -211,6 +208,8 @@ body.resizing-sidebar {
 }
 aside {
   position: relative;
+  container-name: sidebar;
+  container-type: inline-size;
   background: #eeece6;
   border-right: 1px solid #dcd9d1;
   padding: 18px 12px;
@@ -412,8 +411,8 @@ aside footer {
   position: fixed;
   z-index: 45;
   top: 120px;
-  left: calc(var(--sidebar-width, 15vw) + 8px);
-  width: min(300px, calc(100vw - var(--sidebar-width, 15vw) - 24px));
+  left: calc(var(--sidebar-width, 20vw) + 8px);
+  width: min(300px, calc(100vw - var(--sidebar-width, 20vw) - 24px));
   display: flex;
   max-height: calc(100vh - 144px);
   flex-direction: column;
@@ -800,6 +799,20 @@ aside footer {
   box-shadow: 0 1px 3px #322b1b17;
   color: #49443d;
   font-weight: 600;
+}
+@container sidebar (max-width: 230px) {
+  .sidebar-tabs {
+    gap: 6px;
+  }
+
+  .sidebar-tabs button {
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .sidebar-tab-label {
+    display: none;
+  }
 }
 nav {
   flex: 1;
@@ -1293,6 +1306,9 @@ aside footer button:focus-visible {
 }
 .chat {
   display: grid;
+  container-name: chat;
+  container-type: inline-size;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 64px 1fr auto;
   min-width: 0;
   background: #faf9f6;
@@ -1315,11 +1331,8 @@ aside footer button:focus-visible {
   .shell.workspace-open.sidebar-collapsed {
     grid-template-columns:
       56px
-      minmax(
-        360px,
-        min(var(--workspace-width, 60vw), calc(100vw - 56px - 280px))
-      )
-      minmax(280px, 1fr);
+      minmax(0, min(var(--workspace-width, 50vw), calc(70vw - 56px)))
+      minmax(30vw, 1fr);
   }
   .shell.sidebar-collapsed > aside {
     visibility: visible;
@@ -1351,13 +1364,25 @@ aside footer button:focus-visible {
   .shell.sidebar-collapsed .sidebar-tabs {
     grid-template-columns: 1fr;
     width: 40px;
+    gap: 6px;
     padding: 3px;
     margin: 0 auto;
     background: transparent;
   }
   .shell.sidebar-collapsed .sidebar-tabs button {
     width: 34px;
+    height: 34px;
+    min-height: 34px;
+    justify-content: center;
+    gap: 0;
     padding: 0;
+  }
+  .shell.sidebar-collapsed .sidebar-tabs button::after {
+    display: none;
+  }
+  .shell.sidebar-collapsed .sidebar-tabs button > svg {
+    flex: 0 0 auto;
+    transform: none;
   }
   .shell.sidebar-collapsed .sidebar-tabs button.active {
     background: #dedbd3;
@@ -1393,10 +1418,10 @@ aside footer button:focus-visible {
   top: 0;
   bottom: 0;
   left: calc(
-    var(--sidebar-width, 15vw) +
+    var(--sidebar-width, 20vw) +
       min(
-        var(--workspace-width, 60vw),
-        calc(100vw - var(--sidebar-width, 15vw) - 280px)
+        var(--workspace-width, 50vw),
+        calc(70vw - var(--sidebar-width, 20vw))
       ) -
       4px
   );
@@ -1417,9 +1442,7 @@ body.resizing-workspace .workspace-resizer::after {
   background: #c15f3c73;
 }
 .shell.sidebar-collapsed .workspace-resizer {
-  left: calc(
-    56px + min(var(--workspace-width, 60vw), calc(100vw - 56px - 280px)) - 4px
-  );
+  left: calc(56px + min(var(--workspace-width, 50vw), calc(70vw - 56px)) - 4px);
 }
 body.resizing-workspace {
   cursor: col-resize;
@@ -1486,7 +1509,7 @@ body.resizing-workspace {
 @media (min-width: 701px) and (max-width: 900px) {
   .shell.workspace-open,
   .shell.workspace-open.sidebar-collapsed {
-    grid-template-columns: var(--sidebar-width, 15vw) minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-width, 20vw) minmax(0, 1fr);
   }
   .shell.workspace-open.sidebar-collapsed {
     grid-template-columns: 56px minmax(0, 1fr);

@@ -1137,6 +1137,20 @@ article.user {
   background: #aeb3b8;
 }
 
+@container chat (max-width: 420px) {
+  .response-actions button {
+    width: 32px;
+    min-width: 32px;
+    justify-content: center;
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .response-actions button > span {
+    display: none;
+  }
+}
+
 *:focus-visible {
   outline-color: var(--mm-ink);
 }

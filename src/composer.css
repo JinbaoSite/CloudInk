@@ -371,6 +371,7 @@
 
 .composer-actions-right {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 7px;
 }
@@ -718,7 +719,31 @@
   font-size: 12px;
 }
 .composer .model-picker {
+  min-width: 0;
   max-width: 150px;
+}
+
+@media (min-width: 701px) and (max-width: 1200px) {
+  .shell.workspace-open .composer-actions {
+    gap: 3px;
+  }
+
+  .shell.workspace-open .composer-actions-right {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    gap: 2px;
+  }
+
+  .shell.workspace-open .composer .mode-picker {
+    min-width: 0;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .shell.workspace-open .composer .model-picker {
+    flex: 1 1 56px;
+    max-width: 90px;
+  }
 }
 
 .model-picker-label {
