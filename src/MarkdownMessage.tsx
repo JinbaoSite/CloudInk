@@ -1,9 +1,58 @@
-import { Component, Fragment, useEffect, useRef, type ReactNode } from "react";
+import {
+  Component,
+  Fragment,
+  memo,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import Markdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeMathjax from "rehype-mathjax/browser";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { resolveWorkspaceLink } from "./workspace-links";
+
+const BASE_PATH = import.meta.env.BASE_URL;
+let mathJaxLoader: Promise<void> | undefined;
+
+function containsMath(content: string) {
+  return /(?:\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(^|[^\\])\$[^$\n]+\$)/m.test(
+    content,
+  );
+}
+
+function loadMathJax() {
+  if (window.MathJax?.typesetPromise) return Promise.resolve();
+  if (mathJaxLoader) return mathJaxLoader;
+  mathJaxLoader = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[data-cloudink-mathjax="true"]',
+    );
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = `${BASE_PATH}mathjax/tex-chtml.js`;
+    script.defer = true;
+    script.dataset.cloudinkMathjax = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("MathJax 加载失败"));
+    document.head.appendChild(script);
+  });
+  return mathJaxLoader;
+}
+
+declare global {
+  interface Window {
+    MathJax?: {
+      typesetClear?: (nodes: Element[]) => void;
+      typesetPromise?: (nodes: Element[]) => Promise<void>;
+    };
+  }
+}
 
 function RenderedMarkdown({
   children,
@@ -18,19 +67,15 @@ function RenderedMarkdown({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (streaming) return;
+    if (streaming || !containsMath(children)) return;
     const root = rootRef.current;
-    const mathJax = (
-      window as typeof window & {
-        MathJax?: {
-          typesetClear?: (nodes: Element[]) => void;
-          typesetPromise?: (nodes: Element[]) => Promise<void>;
-        };
-      }
-    ).MathJax;
-    if (!root || !mathJax?.typesetPromise) return;
-    mathJax.typesetClear?.([root]);
-    void mathJax.typesetPromise([root]).catch(() => undefined);
+    if (!root) return;
+    void loadMathJax()
+      .then(() => {
+        window.MathJax?.typesetClear?.([root]);
+        return window.MathJax?.typesetPromise?.([root]);
+      })
+      .catch(() => undefined);
   }, [children, streaming]);
 
   return (
@@ -42,6 +87,28 @@ function RenderedMarkdown({
           rehypeMathjax,
         ]}
         components={{
+          a: ({ href, children: content, ...props }) => {
+            const path = resolveWorkspaceLink(href, workspacePaths);
+            if (!path || !onOpenWorkspaceFile)
+              return (
+                <a href={href} {...props}>
+                  {content}
+                </a>
+              );
+            return (
+              <a
+                href={href}
+                {...props}
+                title={`在 Workspace 中打开 ${path}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onOpenWorkspaceFile(path);
+                }}
+              >
+                {content}
+              </a>
+            );
+          },
           p: ({ children: content }) => (
             <p>
               {linkWorkspaceMentions(
@@ -192,7 +259,7 @@ class MarkdownErrorBoundary extends Component<
   }
 }
 
-export default function MarkdownMessage({
+function MarkdownMessage({
   children,
   streaming = false,
   workspacePaths = [],
@@ -215,3 +282,11 @@ export default function MarkdownMessage({
     </MarkdownErrorBoundary>
   );
 }
+
+export default memo(
+  MarkdownMessage,
+  (previous, next) =>
+    previous.children === next.children &&
+    previous.streaming === next.streaming &&
+    previous.workspacePaths === next.workspacePaths,
+);

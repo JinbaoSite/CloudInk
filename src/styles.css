@@ -101,15 +101,15 @@ textarea {
 .shell {
   height: 100vh;
   display: grid;
-  grid-template-columns: var(--sidebar-width, 20vw) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 25vw) minmax(0, 1fr);
   position: relative;
 }
 .shell.workspace-open {
   grid-template-columns:
-    var(--sidebar-width, 20vw)
+    var(--sidebar-width, 25vw)
     minmax(
       0,
-      min(var(--workspace-width, 50vw), calc(70vw - var(--sidebar-width, 20vw)))
+      min(var(--workspace-width, 45vw), calc(70vw - var(--sidebar-width, 25vw)))
     )
     minmax(30vw, 1fr);
 }
@@ -139,7 +139,7 @@ textarea {
   z-index: 20;
   top: 0;
   bottom: 0;
-  left: calc(var(--sidebar-width, 20vw) - 4px);
+  left: calc(var(--sidebar-width, 25vw) - 4px);
   display: flex;
   width: 8px;
   align-items: center;
@@ -411,8 +411,8 @@ aside footer {
   position: fixed;
   z-index: 45;
   top: 120px;
-  left: calc(var(--sidebar-width, 20vw) + 8px);
-  width: min(300px, calc(100vw - var(--sidebar-width, 20vw) - 24px));
+  left: calc(var(--sidebar-width, 25vw) + 8px);
+  width: min(300px, calc(100vw - var(--sidebar-width, 25vw) - 24px));
   display: flex;
   max-height: calc(100vh - 144px);
   flex-direction: column;
@@ -890,6 +890,10 @@ nav {
 .workspace-browser-heading button:hover {
   background: #dedbd3;
 }
+.workspace-browser-heading button svg {
+  width: 14px;
+  height: 14px;
+}
 .workspace-browser-empty {
   padding: 28px 12px;
   color: #99938a;
@@ -1025,12 +1029,19 @@ nav {
   height: 10px;
 }
 .directory-chevron {
-  width: 14px;
-  flex: 0 0 14px;
+  display: grid;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  place-items: center;
   color: #9a948b;
-  font-size: 16px;
   transform: rotate(0deg);
   transition: transform 0.12s ease;
+}
+.directory-chevron svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 2;
 }
 .file-directory[open] > summary > .directory-chevron {
   transform: rotate(90deg);
@@ -1042,9 +1053,11 @@ nav {
 }
 .directory-icon svg {
   display: block;
-  width: 15px;
-  height: 15px;
-  fill: currentColor;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
 }
 .file-directory summary > span:last-child,
 .workspace-file > span:nth-child(2) {
@@ -1079,9 +1092,11 @@ nav {
 }
 .workspace-file-icon svg {
   display: block;
-  width: 15px;
-  height: 15px;
-  fill: currentColor;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
 }
 .workspace-file small {
   margin-left: auto;
@@ -1331,7 +1346,7 @@ aside footer button:focus-visible {
   .shell.workspace-open.sidebar-collapsed {
     grid-template-columns:
       56px
-      minmax(0, min(var(--workspace-width, 50vw), calc(70vw - 56px)))
+      minmax(0, min(var(--workspace-width, 45vw), calc(70vw - 56px)))
       minmax(30vw, 1fr);
   }
   .shell.sidebar-collapsed > aside {
@@ -1389,7 +1404,9 @@ aside footer button:focus-visible {
     box-shadow: none;
   }
   .shell.sidebar-collapsed aside > nav,
-  .shell.sidebar-collapsed aside > .workspace-browser {
+  .shell.sidebar-collapsed aside > .workspace-browser,
+  .shell.sidebar-collapsed aside > .projects-sidebar,
+  .shell.sidebar-collapsed aside > .schedule-sidebar-host {
     display: none;
   }
   .shell.sidebar-collapsed aside footer {
@@ -1418,10 +1435,10 @@ aside footer button:focus-visible {
   top: 0;
   bottom: 0;
   left: calc(
-    var(--sidebar-width, 20vw) +
+    var(--sidebar-width, 25vw) +
       min(
-        var(--workspace-width, 50vw),
-        calc(70vw - var(--sidebar-width, 20vw))
+        var(--workspace-width, 45vw),
+        calc(70vw - var(--sidebar-width, 25vw))
       ) -
       4px
   );
@@ -1442,7 +1459,7 @@ body.resizing-workspace .workspace-resizer::after {
   background: #c15f3c73;
 }
 .shell.sidebar-collapsed .workspace-resizer {
-  left: calc(56px + min(var(--workspace-width, 50vw), calc(70vw - 56px)) - 4px);
+  left: calc(56px + min(var(--workspace-width, 45vw), calc(70vw - 56px)) - 4px);
 }
 body.resizing-workspace {
   cursor: col-resize;
@@ -1509,7 +1526,7 @@ body.resizing-workspace {
 @media (min-width: 701px) and (max-width: 900px) {
   .shell.workspace-open,
   .shell.workspace-open.sidebar-collapsed {
-    grid-template-columns: var(--sidebar-width, 20vw) minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-width, 25vw) minmax(0, 1fr);
   }
   .shell.workspace-open.sidebar-collapsed {
     grid-template-columns: 56px minmax(0, 1fr);
@@ -1613,20 +1630,30 @@ article {
 .user-message-actions {
   justify-content: flex-end;
 }
+.user-message-actions .message-time {
+  order: -1;
+}
 .message-time {
+  display: none;
   padding: 0 5px;
   color: #99938a;
   font-size: 11px;
   line-height: 32px;
   white-space: nowrap;
 }
+.assistant .bubble:hover .message-time,
+.user:has(> .bubble:hover) .message-time,
+article:focus-within .message-time {
+  display: inline-flex;
+}
 .response-actions button {
   display: inline-flex;
-  width: auto;
+  width: 32px;
+  min-width: 32px;
   height: 28px;
+  justify-content: center;
   align-items: center;
-  gap: 5px;
-  padding: 0 7px;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;

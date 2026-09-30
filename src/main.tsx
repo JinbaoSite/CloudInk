@@ -1,71 +1,120 @@
 import React, {
   lazy,
+  memo,
   Suspense,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { FontAwesomeIcon as LegacyIcon } from "@fortawesome/react-fontawesome";
 import {
-  faBox,
-  faAnglesLeft,
-  faAnglesRight,
-  faCheck,
-  faBars,
-  faComments,
-  faCopy,
-  faDatabase,
-  faFile,
-  faFileCode,
-  faFileExcel,
-  faFileImage,
-  faFileLines,
-  faFilePdf,
-  faFileVideo,
-  faFileZipper,
-  faFolder,
-  faFolderTree,
-  faEnvelope,
-  faUser,
-  faUsers,
-  faRightFromBracket,
-  faChevronUp,
-  faCloudArrowUp,
-  faArrowDown,
-  faGear,
-  faKey,
-  faListCheck,
-  faPalette,
-  faPenToSquare,
-  faRotateRight,
-  faSliders,
-  faStar,
-  faTerminal,
-  faTrashCan,
-  faWandMagicSparkles,
-  faXmark,
-  faHand,
-  faClock,
+  faArrowDown as legacyArrowDown,
+  faBars as legacyBars,
+  faCheck as legacyCheck,
+  faCloudArrowUp as legacyCloudUpload,
+  faCopy as legacyCopy,
+  faDatabase as legacyDatabase,
+  faFile as legacyFile,
+  faFileCode as legacyFileCode,
+  faFileExcel as legacyFileExcel,
+  faFileImage as legacyFileImage,
+  faFileLines as legacyFileLines,
+  faFilePdf as legacyFilePdf,
+  faFileVideo as legacyFileVideo,
+  faFileZipper as legacyFileZipper,
+  faHand as legacyHand,
+  faListCheck as legacyListCheck,
+  faPenToSquare as legacyPen,
+  faRotateRight as legacyRetry,
+  faWandMagicSparkles as legacyWand,
+  faXmark as legacyX,
 } from "@fortawesome/free-solid-svg-icons";
-import ReactMarkdown, { WorkspaceMentionText } from "./MarkdownMessage";
-import ScheduledTasks from "./ScheduledTasks";
+import {
+  Archive as faFileZipper,
+  ArrowDown as faArrowDown,
+  Check as faCheck,
+  ChevronDown,
+  ChevronUp as faChevronUp,
+  Clock3 as faClock,
+  CloudUpload as faCloudArrowUp,
+  Copy as faCopy,
+  Database as faDatabase,
+  File as faFile,
+  FileCode2 as faFileCode,
+  FileImage as faFileImage,
+  FileSpreadsheet as faFileExcel,
+  FileText as faFileLines,
+  FileType2 as faFilePdf,
+  FileVideo as faFileVideo,
+  Files as faFolderTree,
+  Folder as faFolder,
+  FolderOpen as faFolderOpen,
+  Hand as faHand,
+  House as faHouse,
+  KeyRound as faKey,
+  ListChecks as faListCheck,
+  LogOut as faRightFromBracket,
+  Mail as faEnvelope,
+  Menu as faBars,
+  MessageSquarePlus as faCommentMedical,
+  MessageSquareText as faComments,
+  Package as faBox,
+  Palette as faPalette,
+  PanelLeftClose as faAnglesLeft,
+  PanelLeftOpen as faAnglesRight,
+  RefreshCw as faRotateRight,
+  Settings as faGear,
+  SlidersHorizontal as faSliders,
+  MoreHorizontal,
+  Sparkles,
+  SquarePen as faPenToSquare,
+  Star as faStar,
+  Terminal as faTerminal,
+  Trash2 as faTrashCan,
+  User as faUser,
+  Users as faUsers,
+  WandSparkles as faWandMagicSparkles,
+  X as faXmark,
+  ChevronRight,
+  Plus,
+  type LucideIcon,
+  type LucideProps,
+} from "lucide-react";
+import WorkspaceMentionText from "./WorkspaceMentionText";
 import type { OpenWorkspaceFile } from "./WorkspaceEditor";
 import "./styles.css";
 import "./chat-layout.css";
 import "./markdown.css";
 import "./activity.css";
+import { restoreNarrationOrder } from "./message-order";
 import "./composer.css";
 import "./workspace-editor.css";
 import "./minimax-theme.css";
 import "./scheduled-tasks.css";
+
+function AppIcon({ icon: Icon, ...props }: LucideProps & { icon: LucideIcon }) {
+  return <Icon aria-hidden="true" {...props} />;
+}
 type Session = {
   id: string;
   title: string;
   updated_at: string;
   favorite: 0 | 1;
   username: string;
+  backend?: "claude" | "codex";
+  project_id?: string | null;
+};
+type Project = {
+  id: string;
+  name: string;
+  directory: string;
+  source_directory: string;
+  session_count: number;
+  favorite: 0 | 1;
+  updated_at: string;
 };
 type Activity = {
   kind: "status" | "thinking" | "narration" | "tool" | "tool_result";
@@ -78,6 +127,7 @@ type Activity = {
 };
 type Message = {
   id?: string;
+  cursor?: number;
   role: "user" | "assistant" | "activity" | "metrics";
   content: string;
   created_at?: string;
@@ -150,18 +200,47 @@ type FileTreeNode = {
 };
 const loadWorkspaceEditor = () => import("./WorkspaceEditor");
 const WorkspaceEditor = lazy(loadWorkspaceEditor);
+const MarkdownMessage = lazy(() => import("./MarkdownMessage"));
+const ScheduledTasks = lazy(() => import("./ScheduledTasks"));
+
+function ReactMarkdown({
+  children,
+  ...props
+}: React.ComponentProps<typeof MarkdownMessage>) {
+  return (
+    <Suspense fallback={<div className="markdown-content">{children}</div>}>
+      <MarkdownMessage {...props}>{children}</MarkdownMessage>
+    </Suspense>
+  );
+}
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
 const IMAGE_ATTACHMENT_PATTERN = /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i;
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
+let activeProjectIdForRequests = localStorage.getItem("cloudink-project") || "";
+function scopedApiPath(url: string) {
+  if (
+    !activeProjectIdForRequests ||
+    (!url.startsWith("/workspace") &&
+      !url.startsWith("/files") &&
+      !url.startsWith("/slash-items"))
+  )
+    return url;
+  return `${url}${url.includes("?") ? "&" : "?"}project_id=${encodeURIComponent(activeProjectIdForRequests)}`;
+}
 function workspacePreviewUrl(filePath: string, prefix = "") {
-  return `/api/workspace/preview/${[prefix, filePath]
+  const resource = `${BASE_PATH}/api/workspace/preview/${[prefix, filePath]
     .filter(Boolean)
     .join("/")
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/")}`;
+  return activeProjectIdForRequests
+    ? `${resource}?project_id=${encodeURIComponent(activeProjectIdForRequests)}`
+    : resource;
 }
 function sessionIdFromLocation() {
-  const match = window.location.pathname.match(/^\/sessions\/([^/]+)\/?$/);
+  const relativePath = window.location.pathname.slice(BASE_PATH.length);
+  const match = relativePath.match(/^\/sessions\/([^/]+)\/?$/);
   if (!match) return "";
   try {
     return decodeURIComponent(match[1]);
@@ -169,40 +248,54 @@ function sessionIdFromLocation() {
     return "";
   }
 }
+function defaultProjectDirectory(username: string, projectName: string) {
+  const directoryName = projectName.trim().replace(/[\\/]+/g, "-");
+  return directoryName ? `/${username}/${directoryName}` : "";
+}
 const executionModes: Array<{
   value: ExecutionMode;
-  icon: typeof faWandMagicSparkles;
+  icon: typeof legacyWand;
   name: string;
   description: string;
 }> = [
   {
     value: "auto",
-    icon: faWandMagicSparkles,
+    icon: legacyWand,
     name: "Auto",
     description: "自动判断并执行所需工具",
   },
   {
     value: "plan",
-    icon: faListCheck,
+    icon: legacyListCheck,
     name: "Plan",
     description: "只分析任务并制定实施计划",
   },
   {
     value: "manual",
-    icon: faHand,
+    icon: legacyHand,
     name: "Manual",
     description: "由用户明确控制每项操作",
   },
   {
     value: "acceptEdits",
-    icon: faPenToSquare,
+    icon: legacyPen,
     name: "Edit automatically",
     description: "自动接受文件编辑",
   },
 ];
 type SlashItem = { name: string; description: string };
 type ModelOption = { value: string; description: string };
+type BackendId = "claude" | "codex";
+type BackendOption = {
+  value: BackendId;
+  label: string;
+  available: boolean;
+  model: string;
+  models: ModelOption[];
+};
 const DESKTOP_SIDEBAR_RAIL_WIDTH = 56;
+const MAX_SIDEBAR_WIDTH = 720;
+const LAYOUT_DEFAULTS_VERSION = "25-45-30-v1";
 function localId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -274,21 +367,34 @@ function mergeActivityMessages(messages: Message[]) {
     }
     merged.push(message);
   }
-  // Claude confirms a tool-use message only after the tool block has already
-  // streamed. Move its narration back in front of the contiguous tool cards so
-  // historical sessions preserve the semantic order: narration -> tool.
-  for (let index = 0; index < merged.length; index += 1) {
-    if (parseActivity(merged[index])?.kind !== "narration") continue;
-    let target = index;
-    while (target > 0 && parseActivity(merged[target - 1])?.kind === "tool")
-      target -= 1;
-    if (target === index) continue;
-    const [narration] = merged.splice(index, 1);
-    merged.splice(target, 0, narration);
-  }
-  return merged;
+  // Older Claude events can persist a narration after the tool from the same
+  // event batch. Never move it across tools from an earlier batch: Codex emits
+  // intentional narration/tool pairs in chronological order.
+  return restoreNarrationOrder(merged);
 }
-async function api(url: string, options?: RequestInit) {
+function appendMessageUpdates(current: Message[], updates: Message[]) {
+  const replacements = new Map(
+    updates.flatMap((message) =>
+      message.id ? ([[message.id, message]] as const) : [],
+    ),
+  );
+  const knownIds = new Set(
+    current.flatMap((message) => (message.id ? [message.id] : [])),
+  );
+  return mergeActivityMessages([
+    ...current.map((message) =>
+      message.id && replacements.has(message.id)
+        ? replacements.get(message.id)!
+        : message,
+    ),
+    ...updates.filter((message) => !message.id || !knownIds.has(message.id)),
+  ]);
+}
+async function api(
+  url: string,
+  options?: RequestInit,
+  useActiveProject = true,
+) {
   const method = (options?.method || "GET").toUpperCase();
   let r: Response | undefined;
   let lastError: unknown;
@@ -299,10 +405,13 @@ async function api(url: string, options?: RequestInit) {
         window.setTimeout(resolve, attempt === 1 ? 250 : 750),
       );
     try {
-      r = await fetch("/api" + url, {
-        headers: { "Content-Type": "application/json" },
-        ...options,
-      });
+      r = await fetch(
+        `${BASE_PATH}/api${useActiveProject ? scopedApiPath(url) : url}`,
+        {
+          headers: { "Content-Type": "application/json" },
+          ...options,
+        },
+      );
       break;
     } catch (requestError) {
       lastError = requestError;
@@ -383,7 +492,9 @@ function Login({ onDone, appName }: { onDone: () => void; appName: string }) {
   return (
     <main className="login">
       <form onSubmit={submit}>
-        <div className="brand">✦ {appName}</div>
+        <div className="brand">
+          <Sparkles aria-hidden="true" /> {appName}
+        </div>
         <h1>{register ? "创建账号" : "欢迎回来"}</h1>
         <p>让灵感、代码与智能协作在此汇流</p>
         {register && (
@@ -454,12 +565,21 @@ function Login({ onDone, appName }: { onDone: () => void; appName: string }) {
 }
 function App() {
   const defaultSidebarWidth = () =>
-    Math.max(180, Math.min(520, Math.round(window.innerWidth * 0.2)));
+    Math.max(
+      180,
+      Math.min(MAX_SIDEBAR_WIDTH, Math.round(window.innerWidth * 0.25)),
+    );
   const defaultWorkspaceWidth = () =>
-    Math.max(320, Math.round(window.innerWidth * 0.5));
+    Math.max(320, Math.round(window.innerWidth * 0.45));
+  const resetDefaultLayout =
+    localStorage.getItem("cloudink-layout-defaults-version") !==
+    LAYOUT_DEFAULTS_VERSION;
   const initialSidebarWidth = () => {
     const saved = Number(localStorage.getItem("claude-ui-sidebar-width"));
-    return Number.isFinite(saved) && saved >= 180 && saved <= 520
+    return !resetDefaultLayout &&
+      Number.isFinite(saved) &&
+      saved >= 180 &&
+      saved <= MAX_SIDEBAR_WIDTH
       ? saved
       : defaultSidebarWidth();
   };
@@ -475,10 +595,32 @@ function App() {
     >(),
     [appName, setAppName] = useState("CloudInk"),
     [sessions, setSessions] = useState<Session[]>([]),
+    [projects, setProjects] = useState<Project[]>([]),
+    [projectListExpanded, setProjectListExpanded] = useState(true),
+    [activeProjectId, setActiveProjectId] = useState(
+      activeProjectIdForRequests,
+    ),
+    [newProjectName, setNewProjectName] = useState(""),
+    [projectCreating, setProjectCreating] = useState(false),
+    [showProjectCreate, setShowProjectCreate] = useState(false),
+    [projectSourceDirectories, setProjectSourceDirectories] = useState<
+      string[]
+    >([]),
+    [projectSourceDirectory, setProjectSourceDirectory] = useState(""),
+    [projectDirectoryMenuOpen, setProjectDirectoryMenuOpen] = useState(false),
+    [projectSourcesLoading, setProjectSourcesLoading] = useState(false),
+    [projectMenuId, setProjectMenuId] = useState(""),
+    [editingProject, setEditingProject] = useState<Project | null>(null),
+    [deletingProject, setDeletingProject] = useState<Project | null>(null),
+    [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
+      new Set(),
+    ),
     [active, setActive] = useState(sessionIdFromLocation),
     [messages, setMessages] = useState<Message[]>([]),
     [input, setInput] = useState(""),
     [mode, setMode] = useState<ExecutionMode>("auto"),
+    [currentBackend, setCurrentBackend] = useState<BackendId>("claude"),
+    [backendOptions, setBackendOptions] = useState<BackendOption[]>([]),
     [currentModel, setCurrentModel] = useState("CLI default"),
     [modelOptions, setModelOptions] = useState<ModelOption[]>([]),
     [attachments, setAttachments] = useState<Attachment[]>([]),
@@ -501,16 +643,16 @@ function App() {
     [slashItemsLoading, setSlashItemsLoading] = useState(false),
     [showModeMenu, setShowModeMenu] = useState(false),
     [showModelMenu, setShowModelMenu] = useState(false),
-    [sidebarView, setSidebarView] = useState<
-      "sessions" | "files" | "schedules"
-    >("sessions"),
+    [sidebarView, setSidebarView] = useState<"home" | "files" | "schedules">(
+      "home",
+    ),
     [scheduledSessionTitle, setScheduledSessionTitle] = useState(""),
     [scheduleSidebarHost, setScheduleSidebarHost] =
       useState<HTMLDivElement | null>(null),
     [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth),
     [workspaceWidth, setWorkspaceWidth] = useState(() => {
       const saved = Number(localStorage.getItem("claude-ui-workspace-width"));
-      return Number.isFinite(saved) && saved >= 360
+      return !resetDefaultLayout && Number.isFinite(saved) && saved >= 360
         ? saved
         : defaultWorkspaceWidth();
     }),
@@ -546,9 +688,18 @@ function App() {
     >({}),
     [copiedMessageId, setCopiedMessageId] = useState(""),
     [favoriteUpdatingId, setFavoriteUpdatingId] = useState(""),
-    [expandedRootUsers, setExpandedRootUsers] = useState<Set<string>>(
-      new Set(),
-    ),
+    [sessionMenuId, setSessionMenuId] = useState(""),
+    [sessionMenuPosition, setSessionMenuPosition] = useState({
+      top: 0,
+      left: 0,
+    }),
+    [sessionSubmenuPosition, setSessionSubmenuPosition] = useState({
+      top: 0,
+      left: 0,
+      maxHeight: 240,
+    }),
+    [editingSession, setEditingSession] = useState<Session | null>(null),
+    [editingSessionTitle, setEditingSessionTitle] = useState(""),
     [pendingRegistrations, setPendingRegistrations] = useState<
       PendingRegistration[]
     >([]),
@@ -593,7 +744,9 @@ function App() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
   const skipMessageLoadForRef = useRef("");
+  const messageCursorRef = useRef(0);
   const responseAbortRef = useRef<AbortController | null>(null);
+  const sendInFlightRef = useRef(false);
   const resizingSidebarRef = useRef(false);
   const resizingWorkspaceRef = useRef(false);
   const fileDragDepthRef = useRef(0);
@@ -602,6 +755,10 @@ function App() {
   const slashQuery = slashMatch?.[1].toLowerCase() || "";
   const mentionMatch = input.match(/(?:^|\s)@([^\s@]*)$/);
   const mentionQuery = mentionMatch?.[1].toLowerCase() || "";
+  const workspacePaths = useMemo(
+    () => workspaceFiles.map((file) => file.path),
+    [workspaceFiles],
+  );
   const filteredWorkspaceFiles = workspaceFiles
     .filter((file) => file.path.toLowerCase().includes(mentionQuery))
     .slice(0, 12);
@@ -615,6 +772,9 @@ function App() {
   const activeMode =
     executionModes.find((option) => option.value === mode) || executionModes[0];
   const activeSession = sessions.find((session) => session.id === active);
+  const activeBackend =
+    backendOptions.find((backend) => backend.value === currentBackend) ||
+    backendOptions[0];
   const viewingForeignSession = Boolean(
     me?.isRoot && activeSession && activeSession.username !== me.username,
   );
@@ -622,6 +782,205 @@ function App() {
     (registration) => registration.approval_status === "pending",
   ).length;
   const load = () => api("/sessions").then(setSessions);
+  async function loadProjects() {
+    const [result, allSessions] = (await Promise.all([
+      api("/projects"),
+      api("/sessions"),
+    ])) as [{ projects: Project[] }, Session[]];
+    const available = result.projects || [];
+    setSessions(allSessions);
+    setProjects(available);
+    setExpandedProjectIds((current) =>
+      current.size ? current : new Set(available.map((project) => project.id)),
+    );
+    const linkedProjectId = allSessions.find(
+      (session) => session.id === active,
+    )?.project_id;
+    const selectedId = active
+      ? linkedProjectId || ""
+      : available.some((project) => project.id === activeProjectIdForRequests)
+        ? activeProjectIdForRequests
+        : "";
+    activeProjectIdForRequests = selectedId;
+    setActiveProjectId(selectedId);
+    if (selectedId) localStorage.setItem("cloudink-project", selectedId);
+    else localStorage.removeItem("cloudink-project");
+  }
+  function selectOrdinaryChats() {
+    if (busy || !activeProjectIdForRequests) return;
+    activeProjectIdForRequests = "";
+    setActiveProjectId("");
+    localStorage.removeItem("cloudink-project");
+    navigateToSession("");
+    setMessages([]);
+    setAttachments([]);
+    setWorkspaceFiles([]);
+    setWorkspaceDirectories([]);
+    setWorkspaceFilesLoaded(false);
+    setOpenWorkspaceFiles([]);
+    setActiveWorkspacePath("");
+    setSidebarView("home");
+    void load();
+  }
+  function selectProject(project: Project) {
+    if (busy || project.id === activeProjectIdForRequests) return;
+    activeProjectIdForRequests = project.id;
+    setActiveProjectId(project.id);
+    localStorage.setItem("cloudink-project", project.id);
+    navigateToSession("");
+    setMessages([]);
+    setAttachments([]);
+    setWorkspaceFiles([]);
+    setWorkspaceDirectories([]);
+    setWorkspaceFilesLoaded(false);
+    setOpenWorkspaceFiles([]);
+    setActiveWorkspacePath("");
+    setSidebarView("home");
+    void load();
+  }
+  async function createProject(event: React.FormEvent) {
+    event.preventDefault();
+    if (!newProjectName.trim() || projectCreating) return;
+    setProjectCreating(true);
+    setError("");
+    try {
+      const project = (await api(
+        editingProject ? `/projects/${editingProject.id}` : "/projects",
+        {
+          method: editingProject ? "PATCH" : "POST",
+          body: JSON.stringify({
+            name: newProjectName.trim(),
+            directory: projectSourceDirectory.trim(),
+          }),
+        },
+      )) as Project;
+      setNewProjectName("");
+      setProjectSourceDirectory("");
+      setShowProjectCreate(false);
+      if (editingProject) {
+        setProjects((current) =>
+          current.map((item) =>
+            item.id === editingProject.id ? { ...item, ...project } : item,
+          ),
+        );
+        setEditingProject(null);
+      } else {
+        setProjects((current) => [...current, project]);
+        setExpandedProjectIds((current) => new Set(current).add(project.id));
+        selectProject(project);
+      }
+    } catch (projectError) {
+      setError((projectError as Error).message);
+    } finally {
+      setProjectCreating(false);
+    }
+  }
+  async function openProjectCreate() {
+    setEditingProject(null);
+    setShowProjectCreate(true);
+    setProjectSourcesLoading(true);
+    setProjectSourceDirectory("");
+    setProjectDirectoryMenuOpen(false);
+    try {
+      const result = (await api("/projects/source-directories")) as {
+        directories: string[];
+      };
+      setProjectSourceDirectories(result.directories || []);
+    } catch (sourceError) {
+      setError((sourceError as Error).message);
+      setProjectSourceDirectories([]);
+    } finally {
+      setProjectSourcesLoading(false);
+    }
+  }
+  async function openProjectEdit(project: Project) {
+    setProjectMenuId("");
+    setEditingProject(project);
+    setNewProjectName(project.name);
+    setProjectSourceDirectory(project.directory || "");
+    setProjectDirectoryMenuOpen(false);
+    setShowProjectCreate(true);
+    setProjectSourcesLoading(true);
+    try {
+      const result = (await api("/projects/source-directories")) as {
+        directories: string[];
+      };
+      setProjectSourceDirectories(result.directories || []);
+    } catch (sourceError) {
+      setError((sourceError as Error).message);
+    } finally {
+      setProjectSourcesLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (!projectMenuId) return;
+    const closeProjectMenu = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(`[data-project-menu="${projectMenuId}"]`)) return;
+      setProjectMenuId("");
+    };
+    document.addEventListener("pointerdown", closeProjectMenu);
+    return () => document.removeEventListener("pointerdown", closeProjectMenu);
+  }, [projectMenuId]);
+  useEffect(() => {
+    if (!sessionMenuId) return;
+    const closeSessionMenu = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(`[data-session-menu="${sessionMenuId}"]`)) return;
+      setSessionMenuId("");
+    };
+    document.addEventListener("pointerdown", closeSessionMenu);
+    return () => document.removeEventListener("pointerdown", closeSessionMenu);
+  }, [sessionMenuId]);
+  async function toggleProjectFavorite(project: Project) {
+    setProjectMenuId("");
+    const result = (await api(`/projects/${project.id}/favorite`, {
+      method: "POST",
+      body: JSON.stringify({ favorite: !project.favorite }),
+    })) as Pick<Project, "id" | "favorite" | "updated_at">;
+    setProjects((current) =>
+      current
+        .map((item) => (item.id === project.id ? { ...item, ...result } : item))
+        .sort(
+          (a, b) =>
+            b.favorite - a.favorite || b.updated_at.localeCompare(a.updated_at),
+        ),
+    );
+  }
+  async function confirmDeleteProject() {
+    const project = deletingProject;
+    if (!project) return;
+    try {
+      await api(`/projects/${project.id}`, { method: "DELETE" });
+      setProjects((current) =>
+        current.filter((item) => item.id !== project.id),
+      );
+      setSessions((current) =>
+        current.map((session) =>
+          session.project_id === project.id
+            ? { ...session, project_id: null }
+            : session,
+        ),
+      );
+      if (activeProjectIdForRequests === project.id) selectOrdinaryChats();
+      setDeletingProject(null);
+    } catch (deleteError) {
+      setError((deleteError as Error).message);
+    }
+  }
+  function createProjectConversation(project: Project) {
+    if (busy) return;
+    setExpandedProjectIds((current) => new Set(current).add(project.id));
+    activeProjectIdForRequests = project.id;
+    setActiveProjectId(project.id);
+    localStorage.setItem("cloudink-project", project.id);
+    setWorkspaceFiles([]);
+    setWorkspaceDirectories([]);
+    setWorkspaceFilesLoaded(false);
+    setOpenWorkspaceFiles([]);
+    setActiveWorkspacePath("");
+    create();
+  }
   async function refreshPendingRegistrations() {
     const result = (await api("/admin/registrations")) as {
       users: PendingRegistration[];
@@ -677,6 +1036,7 @@ function App() {
   }
   async function toggleSessionFavorite(session: Session) {
     if (favoriteUpdatingId) return;
+    setSessionMenuId("");
     const favorite: 0 | 1 = session.favorite ? 0 : 1;
     const previous = sessions;
     setFavoriteUpdatingId(session.id);
@@ -701,13 +1061,91 @@ function App() {
       setFavoriteUpdatingId("");
     }
   }
+  async function renameSession(event: React.FormEvent) {
+    event.preventDefault();
+    if (!editingSession || !editingSessionTitle.trim()) return;
+    try {
+      const result = (await api(`/sessions/${editingSession.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: editingSessionTitle.trim() }),
+      })) as Partial<Session> & { id: string };
+      setSessions((current) =>
+        current.map((session) =>
+          session.id === result.id ? { ...session, ...result } : session,
+        ),
+      );
+      setEditingSession(null);
+      setEditingSessionTitle("");
+    } catch (renameError) {
+      setError((renameError as Error).message);
+    }
+  }
+  async function moveSessionToProject(
+    session: Session,
+    projectId: string | null,
+  ) {
+    setSessionMenuId("");
+    try {
+      const result = (await api(`/sessions/${session.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ project_id: projectId }),
+      })) as Partial<Session> & { id: string };
+      setSessions((current) =>
+        current.map((item) =>
+          item.id === result.id ? { ...item, ...result } : item,
+        ),
+      );
+      if (session.id === active) {
+        activeProjectIdForRequests = projectId || "";
+        setActiveProjectId(projectId || "");
+        if (projectId) localStorage.setItem("cloudink-project", projectId);
+        else localStorage.removeItem("cloudink-project");
+        setWorkspaceFiles([]);
+        setWorkspaceDirectories([]);
+        setWorkspaceFilesLoaded(false);
+        setOpenWorkspaceFiles([]);
+      }
+    } catch (moveError) {
+      setError((moveError as Error).message);
+    }
+  }
+  async function deleteSession(session: Session) {
+    setSessionMenuId("");
+    const sessionIndex = sessions.findIndex((item) => item.id === session.id);
+    const wasActive = active === session.id;
+    // Remove the row immediately. The server operation is durable but can be
+    // delayed by network latency and SQLite foreign-key cleanup.
+    setSessions((current) => current.filter((item) => item.id !== session.id));
+    if (wasActive) {
+      navigateToSession("", true);
+      setMessages([]);
+    }
+    try {
+      await api(`/sessions/${session.id}`, { method: "DELETE" });
+    } catch (deleteError) {
+      setSessions((current) => {
+        if (current.some((item) => item.id === session.id)) return current;
+        const restored = [...current];
+        restored.splice(
+          Math.max(0, Math.min(sessionIndex, restored.length)),
+          0,
+          session,
+        );
+        return restored;
+      });
+      if (wasActive) navigateToSession(session.id, true);
+      setError((deleteError as Error).message);
+    }
+  }
   async function refreshSlashItems() {
     const requestId = ++slashItemsRequestRef.current;
     setDynamicCommands([]);
     setDynamicSkills([]);
     setSlashItemsLoading(true);
     try {
-      const result = (await api("/slash-items")) as {
+      const result = (await api(
+        `/slash-items?backend=${encodeURIComponent(currentBackend)}`,
+      )) as {
         commands: SlashItem[];
         skills: SlashItem[];
       };
@@ -722,8 +1160,25 @@ function App() {
         setSlashItemsLoading(false);
     }
   }
-  function navigateToSession(id: string, replace = false) {
-    const url = id ? `/sessions/${encodeURIComponent(id)}` : "/";
+  function prepareForSessionSwitch() {
+    skipMessageLoadForRef.current = "";
+    messageCursorRef.current = 0;
+    responseAbortRef.current?.abort();
+    responseAbortRef.current = null;
+    setMessages([]);
+    setBusy(false);
+    setPendingQuestion(null);
+    setError("");
+  }
+  function navigateToSession(
+    id: string,
+    replace = false,
+    preserveMessages = false,
+  ) {
+    if (!preserveMessages && id !== active) prepareForSessionSwitch();
+    const url = id
+      ? `${BASE_PATH}/sessions/${encodeURIComponent(id)}`
+      : `${BASE_PATH}/`;
     window.history[replace ? "replaceState" : "pushState"](null, "", url);
     setActive(id);
   }
@@ -737,15 +1192,30 @@ function App() {
     api("/me")
       .then((user) => {
         setMe(user);
-        void load();
+        void loadProjects();
         void api("/config")
           .then((config) => {
-            const options = (config.models || []) as ModelOption[];
-            const savedModel = localStorage.getItem("cloudink-model");
+            const backends = (config.backends || []) as BackendOption[];
+            const savedBackend = localStorage.getItem(
+              "cloudink-backend",
+            ) as BackendId | null;
+            const backend =
+              backends.find(
+                (option) => option.value === savedBackend && option.available,
+              ) ||
+              backends.find((option) => option.value === "claude") ||
+              backends[0];
+            const options =
+              backend?.models || ((config.models || []) as ModelOption[]);
+            const savedModel = localStorage.getItem(
+              `cloudink-model-${backend?.value || "claude"}`,
+            );
+            setBackendOptions(backends);
+            setCurrentBackend(backend?.value || "claude");
             setCurrentModel(
               options.some((option) => option.value === savedModel)
                 ? savedModel!
-                : config.model,
+                : backend?.model || config.model,
             );
             setModelOptions(options);
           })
@@ -753,6 +1223,27 @@ function App() {
       })
       .catch(() => setMe(null));
   }, []);
+  useEffect(() => {
+    const sessionBackend = activeSession?.backend;
+    if (!sessionBackend || sessionBackend === currentBackend) return;
+    const backend = backendOptions.find(
+      (option) => option.value === sessionBackend && option.available,
+    );
+    if (!backend) return;
+    const savedModel = localStorage.getItem(`cloudink-model-${backend.value}`);
+    setCurrentBackend(backend.value);
+    setModelOptions(backend.models || []);
+    setCurrentModel(
+      backend.models.some((option) => option.value === savedModel)
+        ? savedModel!
+        : backend.model,
+    );
+  }, [
+    activeSession?.id,
+    activeSession?.backend,
+    backendOptions,
+    currentBackend,
+  ]);
   useEffect(() => {
     document.title = appName;
   }, [appName]);
@@ -763,6 +1254,7 @@ function App() {
   useEffect(() => {
     if (!accountMenuOpen && !accountPanel && !showApprovalPanel) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
+      if (accountPanel === "password") return;
       const target = event.target as Node;
       if (
         accountMenuRef.current?.contains(target) ||
@@ -792,6 +1284,12 @@ function App() {
     };
   }, [me?.isRoot]);
   useEffect(() => {
+    localStorage.setItem(
+      "cloudink-layout-defaults-version",
+      LAYOUT_DEFAULTS_VERSION,
+    );
+  }, []);
+  useEffect(() => {
     localStorage.setItem("claude-ui-sidebar-width", String(sidebarWidth));
   }, [sidebarWidth]);
   useEffect(() => {
@@ -815,6 +1313,7 @@ function App() {
   useEffect(() => {
     const restoreSessionFromUrl = () => {
       autoScrollRef.current = true;
+      prepareForSessionSwitch();
       setActive(sessionIdFromLocation());
       setMobileSessionsOpen(false);
     };
@@ -921,6 +1420,7 @@ function App() {
   }, [showMentionMenu, mentionSelectedIndex]);
   useEffect(() => {
     if (!active || !me) return;
+    messageCursorRef.current = 0;
     setPendingQuestion(null);
     setQuestionAnswers({});
     setCustomQuestionAnswers({});
@@ -931,7 +1431,12 @@ function App() {
     let cancelled = false;
     api(`/sessions/${active}/messages`)
       .then((items: Message[]) => {
-        if (!cancelled) setMessages(mergeActivityMessages(items));
+        if (cancelled) return;
+        messageCursorRef.current = Math.max(
+          0,
+          ...items.map((message) => message.cursor || 0),
+        );
+        setMessages(mergeActivityMessages(items));
       })
       .catch((loadError) => {
         if (cancelled) return;
@@ -947,6 +1452,8 @@ function App() {
     if (!active || !me) return;
     let disposed = false;
     let timer: number | undefined;
+    let firstCheck = true;
+    let wasRunning = false;
     const syncBackgroundRun = async () => {
       if (responseAbortRef.current) {
         timer = window.setTimeout(syncBackgroundRun, 2000);
@@ -960,12 +1467,31 @@ function App() {
         if (disposed) return;
         if (!activeSession && run.title) setScheduledSessionTitle(run.title);
         setBusy(run.running);
-        if (run.running) {
+        if (!firstCheck && run.running) {
+          const items = (await api(
+            `/sessions/${active}/messages?after_cursor=${messageCursorRef.current}&include_recent=1`,
+          )) as Message[];
+          if (!disposed && items.length) {
+            messageCursorRef.current = Math.max(
+              messageCursorRef.current,
+              ...items.map((message) => message.cursor || 0),
+            );
+            setMessages((current) => appendMessageUpdates(current, items));
+          }
+        } else if (!firstCheck && wasRunning) {
           const items = (await api(
             `/sessions/${active}/messages`,
           )) as Message[];
-          if (!disposed) setMessages(mergeActivityMessages(items));
+          if (!disposed) {
+            messageCursorRef.current = Math.max(
+              0,
+              ...items.map((message) => message.cursor || 0),
+            );
+            setMessages(mergeActivityMessages(items));
+          }
         }
+        firstCheck = false;
+        wasRunning = run.running;
       } catch {
         // The normal session-loading effect handles missing or inaccessible
         // sessions. A transient status request must not interrupt the chat.
@@ -1015,9 +1541,21 @@ function App() {
     setShowSlashMenu(false);
     setShowModeMenu(false);
     setScheduledSessionTitle("");
-    setSidebarView("sessions");
+    setSidebarView("home");
     setMobileSessionsOpen(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+  function createOrdinaryConversation() {
+    if (busy) return;
+    activeProjectIdForRequests = "";
+    setActiveProjectId("");
+    localStorage.removeItem("cloudink-project");
+    setWorkspaceFiles([]);
+    setWorkspaceDirectories([]);
+    setWorkspaceFilesLoaded(false);
+    setOpenWorkspaceFiles([]);
+    setActiveWorkspacePath("");
+    create();
   }
   function scrollMessagesToBottom() {
     const container = messagesRef.current;
@@ -1055,7 +1593,7 @@ function App() {
       const form = new FormData();
       selected.forEach((file) => form.append("files", file));
       const result = (await uploadForm(
-        "/api/files",
+        `${BASE_PATH}/api${scopedApiPath("/files")}`,
         form,
         setUploadProgress,
       )) as {
@@ -1166,9 +1704,11 @@ function App() {
     setWorkspaceFilesLoading(true);
     try {
       const publicationsRequest = (
-        api("/workspace/publications") as Promise<{ pages: PublishedPage[] }>
+        api("/workspace/publications", undefined, false) as Promise<{
+          pages: PublishedPage[];
+        }>
       ).catch(() => null);
-      const result = (await api("/workspace/files")) as {
+      const result = (await api("/workspace/files", undefined, false)) as {
         files: WorkspaceFile[];
         directories: string[];
       };
@@ -1212,15 +1752,19 @@ function App() {
     setWorkspaceNameSaving(true);
     setWorkspaceNameError("");
     try {
-      await api("/workspace/entry", {
-        method: "POST",
-        body: JSON.stringify({
-          path: pending.directory
-            ? `${pending.directory}/${normalizedName}`
-            : normalizedName,
-          kind: pending.kind,
-        }),
-      });
+      await api(
+        "/workspace/entry",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            path: pending.directory
+              ? `${pending.directory}/${normalizedName}`
+              : normalizedName,
+            kind: pending.kind,
+          }),
+        },
+        false,
+      );
       setPendingWorkspaceEntry(null);
       await refreshWorkspaceFiles();
     } catch (entryError) {
@@ -1252,14 +1796,18 @@ function App() {
     setWorkspaceRenameSaving(true);
     setWorkspaceRenameError("");
     try {
-      const result = (await api("/workspace/rename", {
-        method: "POST",
-        body: JSON.stringify({
-          path: target.path,
-          name: normalizedName,
-          kind: target.kind,
-        }),
-      })) as { path: string; name: string };
+      const result = (await api(
+        "/workspace/rename",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            path: target.path,
+            name: normalizedName,
+            kind: target.kind,
+          }),
+        },
+        false,
+      )) as { path: string; name: string };
       if (target.kind === "file") {
         setOpenWorkspaceFiles((current) =>
           current.map((openFile) =>
@@ -1289,9 +1837,13 @@ function App() {
     kind: "file" | "folder";
   }) {
     try {
-      await api(`/workspace/entry?path=${encodeURIComponent(target.path)}`, {
-        method: "DELETE",
-      });
+      await api(
+        `/workspace/entry?path=${encodeURIComponent(target.path)}`,
+        {
+          method: "DELETE",
+        },
+        false,
+      );
       const remaining = openWorkspaceFiles.filter(
         (item) =>
           item.path !== target.path &&
@@ -1339,10 +1891,14 @@ function App() {
   }
   async function publishWorkspacePage(target: PublishableWorkspaceEntry) {
     try {
-      const result = (await api("/workspace/publish", {
-        method: "POST",
-        body: JSON.stringify(target),
-      })) as { path: string; url: string };
+      const result = (await api(
+        "/workspace/publish",
+        {
+          method: "POST",
+          body: JSON.stringify(target),
+        },
+        false,
+      )) as { path: string; url: string };
       setPublishedPages((current) => ({
         ...current,
         [result.path]: result.url,
@@ -1369,9 +1925,13 @@ function App() {
   }
   async function unpublishWorkspacePage(target: { path: string }) {
     try {
-      await api(`/workspace/publish?path=${encodeURIComponent(target.path)}`, {
-        method: "DELETE",
-      });
+      await api(
+        `/workspace/publish?path=${encodeURIComponent(target.path)}`,
+        {
+          method: "DELETE",
+        },
+        false,
+      );
       setPublishedPages((current) => {
         const next = { ...current };
         delete next[target.path];
@@ -1385,14 +1945,18 @@ function App() {
   async function pasteWorkspaceFile(directory = "") {
     if (!fileClipboard) return;
     try {
-      const result = (await api("/workspace/paste", {
-        method: "POST",
-        body: JSON.stringify({
-          source: fileClipboard.file.path,
-          directory,
-          operation: fileClipboard.operation,
-        }),
-      })) as { path: string; source: string; operation: "copy" | "cut" };
+      const result = (await api(
+        "/workspace/paste",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            source: fileClipboard.file.path,
+            directory,
+            operation: fileClipboard.operation,
+          }),
+        },
+        false,
+      )) as { path: string; source: string; operation: "copy" | "cut" };
       if (fileClipboard.operation === "cut") {
         setOpenWorkspaceFiles((current) =>
           current.map((file) =>
@@ -1432,7 +1996,7 @@ function App() {
       const form = new FormData();
       selected.forEach((file) => form.append("files", file));
       await uploadForm(
-        `/api/files?directory=${encodeURIComponent(directory)}`,
+        `${BASE_PATH}/api/files?directory=${encodeURIComponent(directory)}`,
         form,
         setUploadProgress,
       );
@@ -1463,6 +2027,8 @@ function App() {
     try {
       const loaded = (await api(
         `/workspace/file?path=${encodeURIComponent(file.path)}`,
+        undefined,
+        false,
       )) as WorkspaceFile & { content: string };
       setOpenWorkspaceFiles((current) =>
         current.map((openFile) =>
@@ -1492,7 +2058,13 @@ function App() {
   }
   function openWorkspacePath(filePath: string) {
     const file = workspaceFiles.find((item) => item.path === filePath);
-    if (file) void openWorkspaceFile(file);
+    void openWorkspaceFile(
+      file || {
+        name: filePath.split("/").pop() || filePath,
+        path: filePath,
+        size: 0,
+      },
+    );
   }
   function updateWorkspaceFile(filePath: string, content: string) {
     setOpenWorkspaceFiles((current) =>
@@ -1506,10 +2078,14 @@ function App() {
     if (!file || file.loading || file.error) return;
     setSavingWorkspacePath(filePath);
     try {
-      const result = (await api("/workspace/file", {
-        method: "PUT",
-        body: JSON.stringify({ path: file.path, content: file.content }),
-      })) as { size: number };
+      const result = (await api(
+        "/workspace/file",
+        {
+          method: "PUT",
+          body: JSON.stringify({ path: file.path, content: file.content }),
+        },
+        false,
+      )) as { size: number };
       setOpenWorkspaceFiles((current) =>
         current.map((item) =>
           item.path === filePath
@@ -1569,14 +2145,17 @@ function App() {
       setError("其他用户的历史会话为只读模式");
       return;
     }
-    if ((!input.trim() && !attachments.length) || busy || uploading) return;
-    let id = active;
-    if (!id) {
-      const s = await api("/sessions", { method: "POST" });
-      id = s.id;
-      skipMessageLoadForRef.current = id;
-      navigateToSession(id);
-    }
+    if (
+      (!input.trim() && !attachments.length) ||
+      busy ||
+      uploading ||
+      sendInFlightRef.current
+    )
+      return;
+    // React state updates are asynchronous. Lock synchronously before the
+    // session-creation request so rapid Enter/click events cannot create and
+    // run the same new conversation more than once.
+    sendInFlightRef.current = true;
     const text = input;
     const sentAttachments = attachments;
     const userMessageId = localId("user");
@@ -1602,15 +2181,30 @@ function App() {
       },
       { id: assistantMessageId, role: "assistant", content: "" },
     ]);
+    let id = active;
     try {
-      const r = await fetch(`/api/sessions/${id}/messages`, {
+      if (!id) {
+        const s = await api("/sessions", {
+          method: "POST",
+          signal: requestController.signal,
+          body: JSON.stringify({
+            backend: currentBackend,
+            project_id: activeProjectIdForRequests,
+          }),
+        });
+        id = s.id;
+        skipMessageLoadForRef.current = id;
+        navigateToSession(id, false, true);
+      }
+      const r = await fetch(`${BASE_PATH}/api/sessions/${id}/messages`, {
         method: "POST",
         signal: requestController.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: text,
           mode,
-          model: currentModel,
+          backend: currentBackend,
+          model: currentModel === "CLI default" ? undefined : currentModel,
           attachments: sentAttachments,
         }),
       });
@@ -1722,6 +2316,15 @@ function App() {
         ),
       );
     } catch (e) {
+      if (!id) {
+        setMessages((items) =>
+          items.filter(
+            (message) =>
+              message.id !== userMessageId && message.id !== assistantMessageId,
+          ),
+        );
+        setInput((current) => current || text);
+      }
       if (
         requestController.signal.aborted ||
         (e as Error).name === "AbortError"
@@ -1736,14 +2339,29 @@ function App() {
         setError((e as Error).message);
       }
     } finally {
+      sendInFlightRef.current = false;
       if (responseAbortRef.current === requestController)
         responseAbortRef.current = null;
       await load().catch(() => undefined);
+      if (id && sessionIdFromLocation() === id) {
+        await api(`/sessions/${id}/messages`)
+          .then((items: Message[]) => {
+            messageCursorRef.current = Math.max(
+              0,
+              ...items.map((message) => message.cursor || 0),
+            );
+            setMessages(mergeActivityMessages(items));
+          })
+          .catch(() => undefined);
+      }
       setBusy(false);
     }
   }
   async function stopResponse() {
-    if (!active) return;
+    if (!active) {
+      responseAbortRef.current?.abort();
+      return;
+    }
     try {
       await api(`/sessions/${active}/stop`, { method: "POST" });
       responseAbortRef.current?.abort();
@@ -1775,29 +2393,41 @@ function App() {
     : null;
   const userInitial =
     Array.from(me.username.trim())[0]?.toLocaleUpperCase() || "U";
-  const sessionGroups = Array.from(
-    sessions.reduce((groups, session) => {
-      const entries = groups.get(session.username) || [];
-      entries.push(session);
-      groups.set(session.username, entries);
-      return groups;
-    }, new Map<string, Session[]>()),
-  );
+  const selectSession = (session: Session) => {
+    autoScrollRef.current = true;
+    const projectId = session.project_id || "";
+    if (projectId !== activeProjectIdForRequests) {
+      activeProjectIdForRequests = projectId;
+      setActiveProjectId(projectId);
+      if (projectId) localStorage.setItem("cloudink-project", projectId);
+      else localStorage.removeItem("cloudink-project");
+      setWorkspaceFiles([]);
+      setWorkspaceDirectories([]);
+      setWorkspaceFilesLoaded(false);
+      setOpenWorkspaceFiles([]);
+      setActiveWorkspacePath("");
+    }
+    navigateToSession(session.id);
+    setMobileSessionsOpen(false);
+  };
   const renderSession = (session: Session) => {
     const owned = session.username === me.username;
     return (
       <div
         className={"session " + (session.id === active ? "active" : "")}
         key={session.id}
+        data-session-menu={session.id}
+        onClick={(event) => {
+          if ((event.target as Element).closest("button")) return;
+          selectSession(session);
+        }}
       >
         <a
           className="session-link"
-          href={`/sessions/${encodeURIComponent(session.id)}`}
+          href={`${BASE_PATH}/sessions/${encodeURIComponent(session.id)}`}
           onClick={(event) => {
             event.preventDefault();
-            autoScrollRef.current = true;
-            navigateToSession(session.id);
-            setMobileSessionsOpen(false);
+            // The row owns navigation so its padding and title are one target.
           }}
         >
           {session.title}
@@ -1806,35 +2436,126 @@ function App() {
           <span className="session-actions">
             <button
               type="button"
-              className={`session-action favorite${session.favorite ? " active" : ""}`}
-              aria-label={`${session.favorite ? "取消收藏" : "收藏"} ${session.title}`}
-              aria-pressed={Boolean(session.favorite)}
-              title={session.favorite ? "取消收藏" : "收藏"}
-              disabled={favoriteUpdatingId === session.id}
+              className="session-action session-more-button"
+              aria-label={`${session.title} 会话操作`}
+              title="会话操作"
               onClick={(event) => {
+                event.preventDefault();
                 event.stopPropagation();
-                void toggleSessionFavorite(session);
+                const rect = event.currentTarget.getBoundingClientRect();
+                const menuHeight = 146;
+                const top =
+                  rect.bottom + menuHeight + 6 <= window.innerHeight
+                    ? rect.bottom + 4
+                    : Math.max(8, rect.top - menuHeight - 4);
+                setSessionMenuPosition({
+                  top,
+                  left: Math.max(
+                    8,
+                    Math.min(rect.right - 142, window.innerWidth - 150),
+                  ),
+                });
+                setSessionMenuId((current) =>
+                  current === session.id ? "" : session.id,
+                );
               }}
             >
-              <FontAwesomeIcon icon={faStar} aria-hidden="true" />
+              <MoreHorizontal aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              className="session-action delete"
-              aria-label={`删除 ${session.title}`}
-              title="删除"
-              onClick={async (event) => {
-                event.stopPropagation();
-                await api("/sessions/" + session.id, { method: "DELETE" });
-                if (active === session.id) {
-                  navigateToSession("", true);
-                  setMessages([]);
-                }
-                await load();
-              }}
-            >
-              <FontAwesomeIcon icon={faTrashCan} aria-hidden="true" />
-            </button>
+            {sessionMenuId === session.id && (
+              <span
+                className="session-actions-menu"
+                style={sessionMenuPosition}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSessionMenuId("");
+                    setEditingSession(session);
+                    setEditingSessionTitle(session.title);
+                  }}
+                >
+                  <AppIcon icon={faPenToSquare} />
+                  重命名
+                </button>
+                <button
+                  type="button"
+                  disabled={favoriteUpdatingId === session.id}
+                  onClick={() => void toggleSessionFavorite(session)}
+                >
+                  <AppIcon icon={faStar} />
+                  {session.favorite ? "取消收藏" : "收藏"}
+                </button>
+                <span
+                  className="session-move-item"
+                  onPointerEnter={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const top = Math.max(8, rect.top - 5);
+                    setSessionSubmenuPosition({
+                      top,
+                      left: Math.max(
+                        8,
+                        Math.min(rect.right - 1, window.innerWidth - 168),
+                      ),
+                      maxHeight: Math.max(80, window.innerHeight - top - 8),
+                    });
+                  }}
+                  onFocus={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const top = Math.max(8, rect.top - 5);
+                    setSessionSubmenuPosition({
+                      top,
+                      left: Math.max(
+                        8,
+                        Math.min(rect.right - 1, window.innerWidth - 168),
+                      ),
+                      maxHeight: Math.max(80, window.innerHeight - top - 8),
+                    });
+                  }}
+                >
+                  <button type="button">
+                    <AppIcon icon={faFolder} />
+                    移至项目
+                    <ChevronRight aria-hidden="true" />
+                  </button>
+                  <span
+                    className="session-project-submenu"
+                    style={sessionSubmenuPosition}
+                  >
+                    <button
+                      type="button"
+                      className={!session.project_id ? "active" : ""}
+                      onClick={() => void moveSessionToProject(session, null)}
+                    >
+                      最近（无项目）
+                    </button>
+                    {projects.map((project) => (
+                      <button
+                        type="button"
+                        className={
+                          session.project_id === project.id ? "active" : ""
+                        }
+                        key={project.id}
+                        onClick={() =>
+                          void moveSessionToProject(session, project.id)
+                        }
+                      >
+                        {project.name}
+                      </button>
+                    ))}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => void deleteSession(session)}
+                >
+                  <AppIcon icon={faTrashCan} />
+                  删除
+                </button>
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -1862,7 +2583,7 @@ function App() {
         <div className="sidebar-heading">
           <div className="brand sidebar-brand" title={appName}>
             <span className="sidebar-brand-mark" aria-hidden="true">
-              ✦
+              <Sparkles />
             </span>
             <span className="sidebar-brand-name">{appName}</span>
           </div>
@@ -1873,9 +2594,7 @@ function App() {
             aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
             onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
           >
-            <FontAwesomeIcon
-              icon={sidebarCollapsed ? faAnglesRight : faAnglesLeft}
-            />
+            <AppIcon icon={sidebarCollapsed ? faAnglesRight : faAnglesLeft} />
           </button>
           <button
             type="button"
@@ -1883,245 +2602,619 @@ function App() {
             aria-label="关闭历史会话"
             onClick={() => setMobileSessionsOpen(false)}
           >
-            <FontAwesomeIcon icon={faXmark} />
+            <AppIcon icon={faXmark} />
           </button>
         </div>
-        <button className="new" title="新对话" onClick={create}>
-          <span className="new-icon" aria-hidden="true">
-            +
-          </span>
-          <span className="new-label">新对话</span>
-        </button>
-        <div className="sidebar-tabs" role="tablist" aria-label="侧栏内容">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebarView === "sessions"}
-            className={sidebarView === "sessions" ? "active" : ""}
-            title="对话"
-            onClick={() => {
-              setSidebarView("sessions");
-              setSidebarCollapsed(false);
-            }}
-          >
-            <FontAwesomeIcon icon={faComments} aria-hidden="true" />
-            <span className="sidebar-tab-label">对话</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebarView === "files"}
-            className={sidebarView === "files" ? "active" : ""}
-            title="文件"
-            onPointerEnter={() => void loadWorkspaceEditor()}
-            onClick={showWorkspaceFiles}
-          >
-            <FontAwesomeIcon icon={faFolderTree} aria-hidden="true" />
-            <span className="sidebar-tab-label">文件</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebarView === "schedules"}
-            className={sidebarView === "schedules" ? "active" : ""}
-            title="定时任务"
-            onClick={() => {
-              setSidebarView("schedules");
-              setSidebarCollapsed(false);
-              setMobileSessionsOpen(false);
-            }}
-          >
-            <FontAwesomeIcon icon={faClock} aria-hidden="true" />
-            <span className="sidebar-tab-label">定时</span>
-          </button>
-        </div>
-        {sidebarView === "sessions" ? (
-          <nav aria-label="历史对话">
-            {me.isRoot
-              ? sessionGroups.map(([username, userSessions]) => (
-                  <details
-                    className="root-session-group"
-                    key={username}
-                    open={expandedRootUsers.has(username)}
-                    onToggle={(event) => {
-                      const open = event.currentTarget.open;
-                      setExpandedRootUsers((current) => {
-                        const next = new Set(current);
-                        if (open) next.add(username);
-                        else next.delete(username);
-                        return next;
-                      });
-                    }}
-                  >
-                    <summary>
-                      <span className="root-session-chevron" aria-hidden="true">
-                        &gt;
-                      </span>
-                      <FontAwesomeIcon icon={faFolder} aria-hidden="true" />
-                      <span>{username}</span>
-                      <small>{userSessions.length}</small>
-                    </summary>
-                    <div className="root-session-list">
-                      {userSessions.map(renderSession)}
+        <div className="sidebar-content">
+          <div className="sidebar-tabs" role="tablist" aria-label="侧栏内容">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sidebarView === "home"}
+              className={sidebarView === "home" ? "active" : ""}
+              title="首页"
+              onClick={() => {
+                setSidebarView("home");
+                setSidebarCollapsed(false);
+              }}
+            >
+              <AppIcon icon={faHouse} />
+              <span className="sidebar-tab-label">首页</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sidebarView === "schedules"}
+              className={sidebarView === "schedules" ? "active" : ""}
+              title="定时任务"
+              onClick={() => {
+                setSidebarView("schedules");
+                setSidebarCollapsed(false);
+                setMobileSessionsOpen(false);
+              }}
+            >
+              <AppIcon icon={faClock} />
+              <span className="sidebar-tab-label">定时任务</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sidebarView === "files"}
+              className={sidebarView === "files" ? "active" : ""}
+              title="文件"
+              onPointerEnter={() => void loadWorkspaceEditor()}
+              onClick={showWorkspaceFiles}
+            >
+              <AppIcon icon={faFolderTree} />
+              <span className="sidebar-tab-label">文件</span>
+            </button>
+          </div>
+          <div className="sidebar-primary">
+            {sidebarView === "home" ? (
+              <>
+                <button
+                  className="new"
+                  title="新对话"
+                  onClick={createOrdinaryConversation}
+                >
+                  <span className="new-icon" aria-hidden="true">
+                    <AppIcon icon={faPenToSquare} />
+                  </span>
+                  <span className="new-label">新对话</span>
+                </button>
+                <section className="projects-sidebar" role="tabpanel">
+                  <div className="projects-sidebar-heading">
+                    <button
+                      type="button"
+                      className="project-list-toggle"
+                      aria-expanded={projectListExpanded}
+                      onClick={() =>
+                        setProjectListExpanded((expanded) => !expanded)
+                      }
+                    >
+                      <b>项目</b>
+                      <ChevronRight
+                        className={projectListExpanded ? "expanded" : ""}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <div className="projects-heading-actions">
+                      <button
+                        type="button"
+                        aria-label="创建项目"
+                        title="创建项目"
+                        onClick={() => void openProjectCreate()}
+                      >
+                        <Plus aria-hidden="true" />
+                      </button>
                     </div>
-                  </details>
-                ))
-              : sessions.map(renderSession)}
-          </nav>
-        ) : sidebarView === "files" ? (
-          <div
-            className={`workspace-browser${draggingWorkspaceFiles ? " dragging-files" : ""}`}
-            role="tabpanel"
-            onContextMenu={(event) => {
-              event.preventDefault();
-              setFileContextMenu({ x: event.clientX, y: event.clientY });
-            }}
-            onDragEnter={(event) => {
-              if (!Array.from(event.dataTransfer.types).includes("Files"))
-                return;
-              event.preventDefault();
-              setDraggingWorkspaceFiles(true);
-              setWorkspaceDropDirectory("");
-            }}
-            onDragOver={(event) => {
-              if (!Array.from(event.dataTransfer.types).includes("Files"))
-                return;
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "copy";
-              if (event.target === event.currentTarget)
-                setWorkspaceDropDirectory("");
-            }}
-            onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-                setDraggingWorkspaceFiles(false);
-                setWorkspaceDropDirectory(null);
-              }
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              void uploadWorkspaceFiles(
-                event.dataTransfer.files,
-                workspaceDropDirectory || "",
-              );
-            }}
-          >
-            <input
-              ref={workspaceFileInputRef}
-              type="file"
-              multiple
-              hidden
-              onChange={(event) =>
-                void uploadWorkspaceFiles(
-                  event.target.files,
-                  workspaceUploadDirectory,
-                )
-              }
-            />
-            <div className="workspace-browser-heading">
-              <span title={me.username}>
-                {me.isRoot ? "~/workspaces" : `~/${me.username}`}
-              </span>
-              <button
-                type="button"
-                title="刷新文件目录"
-                aria-label="刷新文件目录"
-                onClick={() => {
-                  void loadWorkspaceFiles(true);
-                }}
-              >
-                ↻
-              </button>
-            </div>
-            {uploadTarget === "workspace" && uploadProgress != null && (
-              <div className="workspace-upload-progress" role="status">
-                <span title={uploadLabel}>{uploadLabel}</span>
-                <b>{uploadProgress}%</b>
-                <div className="upload-progress-track">
-                  <i style={{ width: `${uploadProgress}%` }} />
-                </div>
-              </div>
-            )}
-            {workspaceFilesLoading &&
-            !workspaceFilesLoaded &&
-            !workspaceFiles.length &&
-            !workspaceDirectories.length ? (
-              <div className="workspace-browser-empty">正在读取文件目录…</div>
-            ) : workspaceFiles.length ||
-              workspaceDirectories.length ||
-              pendingWorkspaceEntry ? (
-              <WorkspaceFileTree
-                files={workspaceFiles}
-                directories={workspaceDirectories}
-                pendingEntry={pendingWorkspaceEntry}
-                pendingRename={pendingWorkspaceRename}
-                entrySaving={workspaceNameSaving}
-                entryError={workspaceNameError}
-                renameSaving={workspaceRenameSaving}
-                renameError={workspaceRenameError}
-                clipboard={fileClipboard}
-                dropDirectory={workspaceDropDirectory}
-                activePath={activeWorkspacePath}
-                onOpenFile={(file) => void openWorkspaceFile(file)}
-                onCreateEntry={(name) => void createWorkspaceEntry(name)}
-                onCancelEntry={() => {
-                  setPendingWorkspaceEntry(null);
-                  setWorkspaceNameError("");
-                }}
-                onRename={(name) => void renameWorkspaceFile(name)}
-                onCancelRename={() => {
-                  setPendingWorkspaceRename(null);
-                  setWorkspaceRenameError("");
-                }}
-                onContextMenu={(event, file) => {
+                  </div>
+                  {showProjectCreate && (
+                    <div
+                      className="project-modal-backdrop"
+                      role="presentation"
+                      onMouseDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        setShowProjectCreate(false);
+                        setNewProjectName("");
+                      }}
+                    >
+                      <form
+                        className="project-create-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="project-create-title"
+                        onSubmit={createProject}
+                      >
+                        <header>
+                          <div>
+                            <b id="project-create-title">
+                              {editingProject ? "编辑项目" : "创建项目"}
+                            </b>
+                            <small>
+                              {editingProject
+                                ? "修改项目名称或绑定的目录路径"
+                                : "选择已有目录，或输入新路径自动创建目录"}
+                            </small>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label="关闭"
+                            onClick={() => {
+                              setShowProjectCreate(false);
+                              setNewProjectName("");
+                              setEditingProject(null);
+                            }}
+                          >
+                            <AppIcon icon={faXmark} />
+                          </button>
+                        </header>
+                        <label>
+                          <span>项目名称</span>
+                          <input
+                            autoFocus
+                            value={newProjectName}
+                            maxLength={60}
+                            placeholder="例如：推荐算法平台"
+                            onChange={(event) => {
+                              const nextName = event.target.value;
+                              if (
+                                !editingProject &&
+                                (!projectSourceDirectory ||
+                                  projectSourceDirectory ===
+                                    defaultProjectDirectory(
+                                      me.username,
+                                      newProjectName,
+                                    ))
+                              )
+                                setProjectSourceDirectory(
+                                  defaultProjectDirectory(
+                                    me.username,
+                                    nextName,
+                                  ),
+                                );
+                              setNewProjectName(nextName);
+                            }}
+                          />
+                        </label>
+                        <div className="project-directory-field">
+                          <span>项目目录路径</span>
+                          <div className="project-directory-input">
+                            <input
+                              required
+                              aria-label="项目目录路径"
+                              value={projectSourceDirectory}
+                              disabled={projectSourcesLoading}
+                              maxLength={500}
+                              placeholder={
+                                projectSourcesLoading
+                                  ? "正在读取目录…"
+                                  : `例如：/${me.username}/my-project`
+                              }
+                              onFocus={() => setProjectDirectoryMenuOpen(true)}
+                              onBlur={() =>
+                                window.setTimeout(
+                                  () => setProjectDirectoryMenuOpen(false),
+                                  120,
+                                )
+                              }
+                              onChange={(event) => {
+                                setProjectSourceDirectory(event.target.value);
+                                setProjectDirectoryMenuOpen(true);
+                              }}
+                            />
+                            <button
+                              type="button"
+                              aria-label="选择项目目录"
+                              aria-expanded={projectDirectoryMenuOpen}
+                              disabled={projectSourcesLoading}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() =>
+                                setProjectDirectoryMenuOpen((open) => !open)
+                              }
+                            >
+                              <ChevronDown aria-hidden="true" />
+                            </button>
+                          </div>
+                          {projectDirectoryMenuOpen &&
+                            !projectSourcesLoading && (
+                              <div
+                                className="project-directory-menu"
+                                role="listbox"
+                              >
+                                {projectSourceDirectories.map((directory) => (
+                                  <button
+                                    type="button"
+                                    role="option"
+                                    aria-selected={
+                                      directory === projectSourceDirectory
+                                    }
+                                    key={directory}
+                                    onMouseDown={(event) =>
+                                      event.preventDefault()
+                                    }
+                                    onClick={() => {
+                                      setProjectSourceDirectory(directory);
+                                      setProjectDirectoryMenuOpen(false);
+                                    }}
+                                  >
+                                    <AppIcon icon={faFolder} />
+                                    <span>{directory}</span>
+                                  </button>
+                                ))}
+                                {!projectSourceDirectories.length && (
+                                  <div className="project-directory-menu-empty">
+                                    暂无已有目录，可直接输入新路径
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          <small>
+                            {editingProject
+                              ? "当前项目直接使用此目录；修改后会切换到新的目录路径"
+                              : "可选择已有目录，也可输入不存在的相对路径并自动创建"}
+                          </small>
+                        </div>
+                        <footer>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowProjectCreate(false);
+                              setNewProjectName("");
+                              setEditingProject(null);
+                            }}
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="submit"
+                            className="primary"
+                            disabled={
+                              !newProjectName.trim() ||
+                              !projectSourceDirectory.trim() ||
+                              projectCreating
+                            }
+                          >
+                            {projectCreating
+                              ? "保存中…"
+                              : editingProject
+                                ? "保存"
+                                : "创建项目"}
+                          </button>
+                        </footer>
+                      </form>
+                    </div>
+                  )}
+                  <div className="project-list">
+                    {projectListExpanded && (
+                      <div className="project-groups">
+                        {projects.map((project) => {
+                          const projectSessions = sessions.filter(
+                            (session) => session.project_id === project.id,
+                          );
+                          return (
+                            <div className="project-group" key={project.id}>
+                              <div
+                                className="project-group-row"
+                                data-project-menu={project.id}
+                              >
+                                <button
+                                  type="button"
+                                  className="project-group-heading"
+                                  aria-expanded={expandedProjectIds.has(
+                                    project.id,
+                                  )}
+                                  onClick={() =>
+                                    setExpandedProjectIds((current) => {
+                                      const next = new Set(current);
+                                      if (next.has(project.id))
+                                        next.delete(project.id);
+                                      else next.add(project.id);
+                                      return next;
+                                    })
+                                  }
+                                >
+                                  <AppIcon
+                                    className="project-folder-icon"
+                                    icon={
+                                      expandedProjectIds.has(project.id)
+                                        ? faFolderOpen
+                                        : faFolder
+                                    }
+                                    aria-hidden="true"
+                                  />
+                                  <span>{project.name}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="project-more-button"
+                                  aria-label={`${project.name} 项目操作`}
+                                  title="项目操作"
+                                  onClick={() =>
+                                    setProjectMenuId((current) =>
+                                      current === project.id ? "" : project.id,
+                                    )
+                                  }
+                                >
+                                  <MoreHorizontal aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="project-new-chat-button"
+                                  aria-label={`在 ${project.name} 中新建对话`}
+                                  title="在项目中创建对话"
+                                  onClick={() =>
+                                    createProjectConversation(project)
+                                  }
+                                >
+                                  <AppIcon icon={faCommentMedical} />
+                                </button>
+                                {projectMenuId === project.id && (
+                                  <div className="project-actions-menu">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void toggleProjectFavorite(project)
+                                      }
+                                    >
+                                      <AppIcon icon={faStar} />
+                                      {project.favorite ? "取消置顶" : "置顶"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void openProjectEdit(project)
+                                      }
+                                    >
+                                      <AppIcon icon={faPenToSquare} />
+                                      编辑
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="danger"
+                                      onClick={() => {
+                                        setProjectMenuId("");
+                                        setDeletingProject(project);
+                                      }}
+                                    >
+                                      <AppIcon icon={faTrashCan} />
+                                      删除
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              {expandedProjectIds.has(project.id) &&
+                                projectSessions.length > 0 && (
+                                  <div className="project-session-list">
+                                    {projectSessions.map(renderSession)}
+                                  </div>
+                                )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div className="recent-section-heading">
+                      <button type="button" onClick={selectOrdinaryChats}>
+                        最近
+                      </button>
+                    </div>
+                    <div className="recent-session-list">
+                      {sessions
+                        .filter((session) => !session.project_id)
+                        .map(renderSession)}
+                    </div>
+                  </div>
+                  {deletingProject && (
+                    <div className="project-modal-backdrop" role="presentation">
+                      <section
+                        className="project-delete-modal"
+                        role="alertdialog"
+                        aria-modal="true"
+                      >
+                        <b>删除项目“{deletingProject.name}”？</b>
+                        <p>
+                          仅删除项目记录，目录和文件会保留，历史会话将移动到“最近”。
+                        </p>
+                        <footer>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingProject(null)}
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            className="danger"
+                            onClick={() => void confirmDeleteProject()}
+                          >
+                            删除项目
+                          </button>
+                        </footer>
+                      </section>
+                    </div>
+                  )}
+                  {editingSession && (
+                    <div className="project-modal-backdrop" role="presentation">
+                      <form
+                        className="session-rename-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="session-rename-title"
+                        onSubmit={renameSession}
+                      >
+                        <b id="session-rename-title">重命名对话</b>
+                        <input
+                          autoFocus
+                          maxLength={120}
+                          value={editingSessionTitle}
+                          onChange={(event) =>
+                            setEditingSessionTitle(event.target.value)
+                          }
+                        />
+                        <footer>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSession(null);
+                              setEditingSessionTitle("");
+                            }}
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="submit"
+                            className="primary"
+                            disabled={!editingSessionTitle.trim()}
+                          >
+                            保存
+                          </button>
+                        </footer>
+                      </form>
+                    </div>
+                  )}
+                </section>
+              </>
+            ) : sidebarView === "files" ? (
+              <div
+                className={`workspace-browser${draggingWorkspaceFiles ? " dragging-files" : ""}`}
+                role="tabpanel"
+                onContextMenu={(event) => {
                   event.preventDefault();
-                  event.stopPropagation();
-                  setFileContextMenu({
-                    x: event.clientX,
-                    y: event.clientY,
-                    file,
-                  });
+                  setFileContextMenu({ x: event.clientX, y: event.clientY });
                 }}
-                onDirectoryContextMenu={(event, directory) => {
+                onDragEnter={(event) => {
+                  if (!Array.from(event.dataTransfer.types).includes("Files"))
+                    return;
                   event.preventDefault();
-                  event.stopPropagation();
-                  setFileContextMenu({
-                    x: event.clientX,
-                    y: event.clientY,
-                    directory,
-                  });
-                }}
-                onDropTarget={(event, directory) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  event.dataTransfer.dropEffect = "copy";
                   setDraggingWorkspaceFiles(true);
-                  setWorkspaceDropDirectory(directory);
+                  setWorkspaceDropDirectory("");
                 }}
-                onDropFiles={(event, directory) => {
+                onDragOver={(event) => {
+                  if (!Array.from(event.dataTransfer.types).includes("Files"))
+                    return;
                   event.preventDefault();
-                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = "copy";
+                  if (event.target === event.currentTarget)
+                    setWorkspaceDropDirectory("");
+                }}
+                onDragLeave={(event) => {
+                  if (
+                    !event.currentTarget.contains(event.relatedTarget as Node)
+                  ) {
+                    setDraggingWorkspaceFiles(false);
+                    setWorkspaceDropDirectory(null);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
                   void uploadWorkspaceFiles(
                     event.dataTransfer.files,
-                    directory,
+                    workspaceDropDirectory || "",
                   );
                 }}
-              />
-            ) : (
-              <div className="workspace-browser-empty">工作区暂无文件</div>
-            )}
-            {draggingWorkspaceFiles && uploadTarget !== "workspace" && (
-              <div className="workspace-drop-overlay">
-                上传到 {workspaceDropDirectory || "工作区根目录"}
+              >
+                <input
+                  ref={workspaceFileInputRef}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(event) =>
+                    void uploadWorkspaceFiles(
+                      event.target.files,
+                      workspaceUploadDirectory,
+                    )
+                  }
+                />
+                <div className="workspace-browser-heading">
+                  <span title={`${me.username} Workspace`}>
+                    {me.username} Workspace
+                  </span>
+                  <button
+                    type="button"
+                    title="刷新文件目录"
+                    aria-label="刷新文件目录"
+                    onClick={() => {
+                      void loadWorkspaceFiles(true);
+                    }}
+                  >
+                    <AppIcon icon={faRotateRight} />
+                  </button>
+                </div>
+                {uploadTarget === "workspace" && uploadProgress != null && (
+                  <div className="workspace-upload-progress" role="status">
+                    <span title={uploadLabel}>{uploadLabel}</span>
+                    <b>{uploadProgress}%</b>
+                    <div className="upload-progress-track">
+                      <i style={{ width: `${uploadProgress}%` }} />
+                    </div>
+                  </div>
+                )}
+                {workspaceFilesLoading &&
+                !workspaceFilesLoaded &&
+                !workspaceFiles.length &&
+                !workspaceDirectories.length ? (
+                  <div className="workspace-browser-empty">
+                    正在读取文件目录…
+                  </div>
+                ) : workspaceFiles.length ||
+                  workspaceDirectories.length ||
+                  pendingWorkspaceEntry ? (
+                  <WorkspaceFileTree
+                    files={workspaceFiles}
+                    directories={workspaceDirectories}
+                    pendingEntry={pendingWorkspaceEntry}
+                    pendingRename={pendingWorkspaceRename}
+                    entrySaving={workspaceNameSaving}
+                    entryError={workspaceNameError}
+                    renameSaving={workspaceRenameSaving}
+                    renameError={workspaceRenameError}
+                    clipboard={fileClipboard}
+                    dropDirectory={workspaceDropDirectory}
+                    activePath={activeWorkspacePath}
+                    onOpenFile={(file) => void openWorkspaceFile(file)}
+                    onCreateEntry={(name) => void createWorkspaceEntry(name)}
+                    onCancelEntry={() => {
+                      setPendingWorkspaceEntry(null);
+                      setWorkspaceNameError("");
+                    }}
+                    onRename={(name) => void renameWorkspaceFile(name)}
+                    onCancelRename={() => {
+                      setPendingWorkspaceRename(null);
+                      setWorkspaceRenameError("");
+                    }}
+                    onContextMenu={(event, file) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setFileContextMenu({
+                        x: event.clientX,
+                        y: event.clientY,
+                        file,
+                      });
+                    }}
+                    onDirectoryContextMenu={(event, directory) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setFileContextMenu({
+                        x: event.clientX,
+                        y: event.clientY,
+                        directory,
+                      });
+                    }}
+                    onDropTarget={(event, directory) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      event.dataTransfer.dropEffect = "copy";
+                      setDraggingWorkspaceFiles(true);
+                      setWorkspaceDropDirectory(directory);
+                    }}
+                    onDropFiles={(event, directory) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void uploadWorkspaceFiles(
+                        event.dataTransfer.files,
+                        directory,
+                      );
+                    }}
+                  />
+                ) : (
+                  <div className="workspace-browser-empty">工作区暂无文件</div>
+                )}
+                {draggingWorkspaceFiles && uploadTarget !== "workspace" && (
+                  <div className="workspace-drop-overlay">
+                    上传到 {workspaceDropDirectory || "工作区根目录"}
+                  </div>
+                )}
               </div>
+            ) : (
+              <div
+                className="schedule-sidebar-host"
+                role="tabpanel"
+                ref={setScheduleSidebarHost}
+              />
             )}
           </div>
-        ) : (
-          <div
-            className="schedule-sidebar-host"
-            role="tabpanel"
-            ref={setScheduleSidebarHost}
-          />
-        )}
+        </div>
         {me.isRoot && showApprovalPanel && (
           <section
             ref={approvalPanelRef}
@@ -2138,7 +3231,7 @@ function App() {
                 aria-label="关闭注册审批"
                 onClick={() => setShowApprovalPanel(false)}
               >
-                <FontAwesomeIcon icon={faXmark} />
+                <AppIcon icon={faXmark} />
               </button>
             </header>
             <div className="root-approval-list">
@@ -2203,26 +3296,20 @@ function App() {
             </div>
           </section>
         )}
-        {accountPanel && (
+        {accountPanel && accountPanel !== "password" && (
           <section
             ref={accountPanelRef}
             className="account-side-panel"
             aria-label="账户设置"
           >
             <header>
-              <b>
-                {accountPanel === "profile"
-                  ? "个人资料"
-                  : accountPanel === "users"
-                    ? "用户资料"
-                    : "修改密码"}
-              </b>
+              <b>{accountPanel === "profile" ? "个人资料" : "用户资料"}</b>
               <button
                 type="button"
                 aria-label="关闭账户设置"
                 onClick={() => setAccountPanel(null)}
               >
-                <FontAwesomeIcon icon={faXmark} />
+                <AppIcon icon={faXmark} />
               </button>
             </header>
             {accountPanel === "profile" && (
@@ -2260,31 +3347,98 @@ function App() {
                     >
                       <span>{Array.from(user.username)[0]?.toUpperCase()}</span>
                       <b>{user.username}</b>
-                      <FontAwesomeIcon icon={faChevronUp} rotation={90} />
+                      <ChevronRight aria-hidden="true" />
                     </button>
                   </article>
                 ))}
               </div>
             )}
-            {accountPanel === "password" && (
+          </section>
+        )}
+        {accountPanel === "password" && (
+          <div
+            className="account-modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target !== event.currentTarget || passwordSaving)
+                return;
+              setAccountPanel(null);
+              setNewPassword("");
+              setAccountNotice("");
+            }}
+          >
+            <section
+              ref={accountPanelRef}
+              className="password-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="password-modal-title"
+            >
+              <header>
+                <div>
+                  <b id="password-modal-title">修改密码</b>
+                  <small>设置一个至少 8 位的新密码</small>
+                </div>
+                <button
+                  type="button"
+                  aria-label="关闭修改密码弹窗"
+                  disabled={passwordSaving}
+                  onClick={() => {
+                    setAccountPanel(null);
+                    setNewPassword("");
+                    setAccountNotice("");
+                  }}
+                >
+                  <AppIcon icon={faXmark} />
+                </button>
+              </header>
               <form className="account-password-form" onSubmit={changePassword}>
                 <label>
-                  新密码
+                  <span>新密码</span>
                   <input
+                    autoFocus
                     type="password"
                     value={newPassword}
                     minLength={8}
+                    autoComplete="new-password"
+                    placeholder="请输入新密码"
                     onChange={(event) => setNewPassword(event.target.value)}
                     required
                   />
                 </label>
-                {accountNotice && <p>{accountNotice}</p>}
-                <button disabled={passwordSaving}>
-                  {passwordSaving ? "保存中…" : "保存新密码"}
-                </button>
+                {accountNotice && (
+                  <p
+                    className={
+                      accountNotice === "密码修改成功" ? "success" : ""
+                    }
+                    role="status"
+                  >
+                    {accountNotice}
+                  </p>
+                )}
+                <footer>
+                  <button
+                    type="button"
+                    disabled={passwordSaving}
+                    onClick={() => {
+                      setAccountPanel(null);
+                      setNewPassword("");
+                      setAccountNotice("");
+                    }}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="primary"
+                    disabled={passwordSaving || newPassword.length < 8}
+                  >
+                    {passwordSaving ? "保存中…" : "保存新密码"}
+                  </button>
+                </footer>
               </form>
-            )}
-          </section>
+            </section>
+          </div>
         )}
         {accountPanel === "users" &&
           selectedAdminUserId &&
@@ -2311,7 +3465,7 @@ function App() {
                     aria-label="关闭用户详情"
                     onClick={() => setSelectedAdminUserId("")}
                   >
-                    <FontAwesomeIcon icon={faXmark} />
+                    <AppIcon icon={faXmark} />
                   </button>
                 </header>
                 <dl className="account-user-details">
@@ -2351,7 +3505,7 @@ function App() {
               type="button"
               onClick={() => void openAccountPanel("profile")}
             >
-              <FontAwesomeIcon icon={faUser} />
+              <AppIcon icon={faUser} />
               个人资料
             </button>
             {me.isRoot && (
@@ -2366,7 +3520,7 @@ function App() {
                     void refreshPendingRegistrations().catch(() => undefined);
                   }}
                 >
-                  <FontAwesomeIcon icon={faEnvelope} />
+                  <AppIcon icon={faEnvelope} />
                   Messages
                   {pendingRegistrationCount > 0 && (
                     <span>{pendingRegistrationCount}</span>
@@ -2376,7 +3530,7 @@ function App() {
                   type="button"
                   onClick={() => void openAccountPanel("users")}
                 >
-                  <FontAwesomeIcon icon={faUsers} />
+                  <AppIcon icon={faUsers} />
                   用户资料
                 </button>
               </>
@@ -2385,7 +3539,7 @@ function App() {
               type="button"
               onClick={() => void openAccountPanel("password")}
             >
-              <FontAwesomeIcon icon={faKey} />
+              <AppIcon icon={faKey} />
               修改密码
             </button>
             <button
@@ -2397,7 +3551,7 @@ function App() {
                 location.reload();
               }}
             >
-              <FontAwesomeIcon icon={faRightFromBracket} />
+              <AppIcon icon={faRightFromBracket} />
               退出登录
             </button>
           </div>
@@ -2427,10 +3581,7 @@ function App() {
                 {pendingRegistrationCount}
               </span>
             )}
-            <FontAwesomeIcon
-              className="sidebar-account-chevron"
-              icon={faChevronUp}
-            />
+            <AppIcon className="sidebar-account-chevron" icon={faChevronUp} />
           </button>
         </footer>
       </aside>
@@ -2441,7 +3592,7 @@ function App() {
           aria-label="调整侧边栏宽度"
           aria-orientation="vertical"
           aria-valuemin={180}
-          aria-valuemax={520}
+          aria-valuemax={MAX_SIDEBAR_WIDTH}
           aria-valuenow={sidebarWidth}
           tabIndex={0}
           onDoubleClick={() => {
@@ -2457,7 +3608,7 @@ function App() {
           onPointerMove={(event) => {
             if (!resizingSidebarRef.current) return;
             const maximum = Math.min(
-              520,
+              MAX_SIDEBAR_WIDTH,
               openWorkspaceFiles.length
                 ? window.innerWidth * 0.7 - 240
                 : window.innerWidth - 360,
@@ -2481,7 +3632,7 @@ function App() {
             const direction = event.key === "ArrowLeft" ? -1 : 1;
             setSidebarWidth((current) => {
               const maximum = Math.min(
-                520,
+                MAX_SIDEBAR_WIDTH,
                 openWorkspaceFiles.length
                   ? window.innerWidth * 0.7 - 240
                   : window.innerWidth - 360,
@@ -2568,18 +3719,21 @@ function App() {
         />
       )}
       {sidebarView === "schedules" && (
-        <ScheduledTasks
-          modelOptions={modelOptions}
-          currentModel={currentModel}
-          sidebarContainer={scheduleSidebarHost}
-          onOpenSidebar={() => setMobileSessionsOpen(true)}
-          onOpenRun={(sessionId, title) => {
-            setScheduledSessionTitle(title);
-            setSidebarView("sessions");
-            setMobileSessionsOpen(false);
-            navigateToSession(sessionId);
-          }}
-        />
+        <Suspense fallback={<div className="center">正在加载定时任务…</div>}>
+          <ScheduledTasks
+            backendOptions={backendOptions}
+            currentBackend={currentBackend}
+            currentModel={currentModel}
+            sidebarContainer={scheduleSidebarHost}
+            onOpenSidebar={() => setMobileSessionsOpen(true)}
+            onOpenRun={(sessionId, title) => {
+              setScheduledSessionTitle(title);
+              setSidebarView("home");
+              setMobileSessionsOpen(false);
+              navigateToSession(sessionId);
+            }}
+          />
+        </Suspense>
       )}
       <section
         className={`chat${sidebarView === "schedules" ? " schedule-hidden" : ""}`}
@@ -2592,7 +3746,7 @@ function App() {
             aria-expanded={mobileSessionsOpen}
             onClick={() => setMobileSessionsOpen(true)}
           >
-            <FontAwesomeIcon icon={faBars} />
+            <LegacyIcon icon={legacyBars} />
           </button>
           <div className="chat-heading">
             {sessions.find((s) => s.id === active)?.title ||
@@ -2603,7 +3757,7 @@ function App() {
             type="button"
             className="mobile-header-button create-button"
             aria-label="新建会话"
-            onClick={create}
+            onClick={createOrdinaryConversation}
           >
             +
           </button>
@@ -2660,14 +3814,14 @@ function App() {
                   {m.role === "assistant" ? (
                     <ReactMarkdown
                       streaming={busy && i === messages.length - 1}
-                      workspacePaths={workspaceFiles.map((file) => file.path)}
+                      workspacePaths={workspacePaths}
                       onOpenWorkspaceFile={openWorkspacePath}
                     >
                       {m.content || "▍"}
                     </ReactMarkdown>
                   ) : (
                     <WorkspaceMentionText
-                      workspacePaths={workspaceFiles.map((file) => file.path)}
+                      workspacePaths={workspacePaths}
                       onOpenWorkspaceFile={openWorkspacePath}
                     >
                       {m.content}
@@ -2688,14 +3842,13 @@ function App() {
                             void copyResponse(m.content, messageKey)
                           }
                         >
-                          <FontAwesomeIcon
+                          <LegacyIcon
                             icon={
-                              copiedMessageId === messageKey ? faCheck : faCopy
+                              copiedMessageId === messageKey
+                                ? legacyCheck
+                                : legacyCopy
                             }
                           />
-                          <span>
-                            {copiedMessageId === messageKey ? "已复制" : "复制"}
-                          </span>
                         </button>
                         <button
                           type="button"
@@ -2704,8 +3857,7 @@ function App() {
                           disabled={busy || viewingForeignSession}
                           onClick={() => retryResponse(i)}
                         >
-                          <FontAwesomeIcon icon={faRotateRight} />
-                          <span>重试</span>
+                          <LegacyIcon icon={legacyRetry} />
                         </button>
                         {m.created_at && <MessageTime value={m.created_at} />}
                       </div>
@@ -2719,12 +3871,13 @@ function App() {
                       aria-label="复制消息"
                       onClick={() => void copyResponse(m.content, messageKey)}
                     >
-                      <FontAwesomeIcon
-                        icon={copiedMessageId === messageKey ? faCheck : faCopy}
+                      <LegacyIcon
+                        icon={
+                          copiedMessageId === messageKey
+                            ? legacyCheck
+                            : legacyCopy
+                        }
                       />
-                      <span>
-                        {copiedMessageId === messageKey ? "已复制" : "复制"}
-                      </span>
                     </button>
                     {m.created_at && <MessageTime value={m.created_at} />}
                   </div>
@@ -2771,12 +3924,12 @@ function App() {
               title="跳转到最新消息"
               onClick={scrollMessagesToBottom}
             >
-              <FontAwesomeIcon icon={faArrowDown} />
+              <LegacyIcon icon={legacyArrowDown} />
             </button>
           )}
           {draggingFiles && uploadTarget !== "composer" && (
             <div className="composer-drop-overlay" aria-hidden="true">
-              <FontAwesomeIcon icon={faCloudArrowUp} />
+              <LegacyIcon icon={legacyCloudUpload} />
               <b>松开以上传</b>
               <span>支持文件和图片，单个最大 500MB</span>
             </div>
@@ -2864,14 +4017,16 @@ function App() {
                   }}
                 >
                   <span className="mode-icon" aria-hidden="true">
-                    <FontAwesomeIcon icon={option.icon} />
+                    <LegacyIcon icon={option.icon} />
                   </span>
                   <span className="mode-copy">
                     <b>{option.name}</b>
                     <small>{option.description}</small>
                   </span>
                   {option.value === mode && (
-                    <span className="mode-check">✓</span>
+                    <span className="mode-check">
+                      <LegacyIcon icon={legacyCheck} />
+                    </span>
                   )}
                 </button>
               ))}
@@ -2885,8 +4040,51 @@ function App() {
               aria-label="可用模型"
             >
               <div className="mode-menu-heading">
-                <span>选择模型</span>
-                <small>应用于下一条消息</small>
+                <span>后端与模型</span>
+                <small>
+                  {active ? "当前会话后端不可切换" : "应用于新会话"}
+                </small>
+              </div>
+              <div
+                className="backend-picker-options"
+                role="tablist"
+                aria-label="AI 后端"
+              >
+                {backendOptions.map((backend) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={backend.value === currentBackend}
+                    className={backend.value === currentBackend ? "active" : ""}
+                    disabled={!backend.available || Boolean(active)}
+                    title={
+                      backend.available
+                        ? active
+                          ? "请新建对话后切换后端"
+                          : `切换到 ${backend.label}`
+                        : `${backend.label} CLI 不可用`
+                    }
+                    key={backend.value}
+                    onClick={() => {
+                      const savedModel = localStorage.getItem(
+                        `cloudink-model-${backend.value}`,
+                      );
+                      setCurrentBackend(backend.value);
+                      setModelOptions(backend.models || []);
+                      setCurrentModel(
+                        backend.models.some(
+                          (option) => option.value === savedModel,
+                        )
+                          ? savedModel!
+                          : backend.model,
+                      );
+                      localStorage.setItem("cloudink-backend", backend.value);
+                    }}
+                  >
+                    {backend.label}
+                    {!backend.available && <small>不可用</small>}
+                  </button>
+                ))}
               </div>
               {modelOptions.map((option) => (
                 <button
@@ -2897,20 +4095,25 @@ function App() {
                   key={option.value}
                   onClick={() => {
                     setCurrentModel(option.value);
-                    localStorage.setItem("cloudink-model", option.value);
+                    localStorage.setItem(
+                      `cloudink-model-${currentBackend}`,
+                      option.value,
+                    );
                     setShowModelMenu(false);
                     requestAnimationFrame(() => textareaRef.current?.focus());
                   }}
                 >
                   <span className="mode-icon" aria-hidden="true">
-                    <FontAwesomeIcon icon={faDatabase} />
+                    <LegacyIcon icon={legacyDatabase} />
                   </span>
                   <span className="mode-copy">
                     <b>{option.value}</b>
                     <small>{option.description}</small>
                   </span>
                   {option.value === currentModel && (
-                    <span className="mode-check">✓</span>
+                    <span className="mode-check">
+                      <LegacyIcon icon={legacyCheck} />
+                    </span>
                   )}
                 </button>
               ))}
@@ -3021,7 +4224,7 @@ function App() {
                     onClick={() => insertFileMention(file)}
                   >
                     <span className="mention-file-icon" aria-hidden="true">
-                      <FontAwesomeIcon icon={fileTypeIcon(file.name)} />
+                      <LegacyIcon icon={legacyFileTypeIcon(file.name)} />
                     </span>
                     <span className="mention-file-copy">
                       <b>{file.name}</b>
@@ -3058,7 +4261,9 @@ function App() {
                       />
                     ) : (
                       <span className="attachment-file-icon" aria-hidden="true">
-                        <FontAwesomeIcon icon={fileTypeIcon(attachment.name)} />
+                        <LegacyIcon
+                          icon={legacyFileTypeIcon(attachment.name)}
+                        />
                       </span>
                     )}
                     <span className="attachment-name">{attachment.name}</span>
@@ -3071,7 +4276,7 @@ function App() {
                         )
                       }
                     >
-                      <FontAwesomeIcon icon={faXmark} aria-hidden="true" />
+                      <LegacyIcon icon={legacyX} />
                     </button>
                   </div>
                 );
@@ -3211,7 +4416,7 @@ function App() {
                 }
                 onClick={() => fileInputRef.current?.click()}
               >
-                {uploading ? "…" : "+"}
+                {uploading ? <span aria-hidden="true">…</span> : "+"}
               </button>
               <button
                 ref={slashButtonRef}
@@ -3245,8 +4450,8 @@ function App() {
                 ref={modelButtonRef}
                 type="button"
                 className="mode-picker model-picker"
-                title={`当前模型：${currentModel}`}
-                aria-label={`选择模型，当前为 ${currentModel}`}
+                title={`当前后端：${activeBackend?.label || currentBackend}；模型：${currentModel}`}
+                aria-label={`选择后端和模型，当前为 ${activeBackend?.label || currentBackend} ${currentModel}`}
                 aria-expanded={showModelMenu}
                 disabled={viewingForeignSession || busy}
                 onClick={() => {
@@ -3255,12 +4460,14 @@ function App() {
                   setShowSlashMenu(false);
                 }}
               >
-                <FontAwesomeIcon
+                <LegacyIcon
                   className="mode-picker-icon"
-                  icon={faDatabase}
+                  icon={legacyDatabase}
                   aria-hidden="true"
                 />
-                <span className="model-picker-label">{currentModel}</span>
+                <span className="model-picker-label">
+                  {activeBackend?.label || currentBackend} · {currentModel}
+                </span>
               </button>
               <button
                 ref={modeButtonRef}
@@ -3275,7 +4482,7 @@ function App() {
                   setShowSlashMenu(false);
                 }}
               >
-                <FontAwesomeIcon
+                <LegacyIcon
                   className="mode-picker-icon"
                   icon={activeMode.icon}
                   aria-hidden="true"
@@ -3386,7 +4593,7 @@ function App() {
               </button>
               <a
                 role="menuitem"
-                href={`/api/workspace/download?path=${encodeURIComponent(fileContextMenu.file.path)}`}
+                href={`${BASE_PATH}/api/workspace/download?path=${encodeURIComponent(fileContextMenu.file.path)}`}
                 download
               >
                 Download
@@ -3625,7 +4832,7 @@ function SubmitAnswerPanel({
           onClick={onDismiss}
           aria-label="关闭"
         >
-          ×
+          <AppIcon icon={faXmark} />
         </button>
       </header>
       <div className="answer-questions">
@@ -4006,7 +5213,7 @@ function WorkspaceNewEntry({
         }
       >
         <span className="workspace-file-icon" aria-hidden="true">
-          <FontAwesomeIcon icon={entry.kind === "folder" ? faFolder : faFile} />
+          <AppIcon icon={entry.kind === "folder" ? faFolder : faFile} />
         </span>
         <input
           autoFocus
@@ -4032,7 +5239,7 @@ function WorkspaceNewEntry({
             aria-label="保存名称"
             onClick={() => onCreate(name)}
           >
-            <FontAwesomeIcon icon={faCheck} />
+            <AppIcon icon={faCheck} />
           </button>
           <button
             type="button"
@@ -4040,7 +5247,7 @@ function WorkspaceNewEntry({
             aria-label="取消命名"
             onClick={onCancel}
           >
-            <FontAwesomeIcon icon={faXmark} />
+            <AppIcon icon={faXmark} />
           </button>
         </span>
       </div>
@@ -4119,9 +5326,11 @@ function WorkspaceDirectory({
           onDragOver={(event) => onDropTarget(event, node.path)}
           onDrop={(event) => onDropFiles(event, node.path)}
         >
-          <span className="directory-chevron">›</span>
+          <span className="directory-chevron">
+            <ChevronRight aria-hidden="true" />
+          </span>
           <span className="directory-icon" aria-hidden="true">
-            <FontAwesomeIcon icon={faFolder} />
+            <AppIcon icon={faFolder} />
           </span>
           <span>{node.name}</span>
         </summary>
@@ -4222,6 +5431,32 @@ function fileTypeIcon(filename: string) {
   return faFile;
 }
 
+function legacyFileTypeIcon(filename: string) {
+  const extension = filename.toLowerCase().split(".").pop() || "";
+  if (
+    ["ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "html", "css"].includes(
+      extension,
+    )
+  )
+    return legacyFileCode;
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"].includes(extension))
+    return legacyFileImage;
+  if (extension === "pdf") return legacyFilePdf;
+  if (["csv", "xls", "xlsx", "parquet"].includes(extension))
+    return legacyFileExcel;
+  if (["zip", "tar", "gz", "tgz", "rar", "7z"].includes(extension))
+    return legacyFileZipper;
+  if (
+    ["mp3", "wav", "ogg", "m4a", "flac", "mp4", "mov", "webm"].includes(
+      extension,
+    )
+  )
+    return legacyFileVideo;
+  if (["md", "mdx", "txt", "doc", "docx", "rtf"].includes(extension))
+    return legacyFileLines;
+  return legacyFile;
+}
+
 function WorkspaceFileRow({
   file,
   active,
@@ -4280,7 +5515,7 @@ function WorkspaceFileRow({
       }
     >
       <span className="workspace-file-icon" aria-hidden="true">
-        <FontAwesomeIcon icon={iconType} />
+        <AppIcon icon={iconType} />
       </span>
       <span>{file.name}</span>
       <small>{formatFileSize(file.size)}</small>
@@ -4308,7 +5543,7 @@ function WorkspaceRenameEntry({
     <div className="workspace-entry-wrap">
       <div className="workspace-new-entry workspace-rename-entry">
         <span className="workspace-file-icon" aria-hidden="true">
-          <FontAwesomeIcon icon={iconType} />
+          <AppIcon icon={iconType} />
         </span>
         <input
           autoFocus
@@ -4341,7 +5576,7 @@ function WorkspaceRenameEntry({
             aria-label="保存名称"
             onClick={() => onRename(name)}
           >
-            <FontAwesomeIcon icon={faCheck} />
+            <AppIcon icon={faCheck} />
           </button>
           <button
             type="button"
@@ -4349,7 +5584,7 @@ function WorkspaceRenameEntry({
             aria-label="取消重命名"
             onClick={onCancel}
           >
-            <FontAwesomeIcon icon={faXmark} />
+            <AppIcon icon={faXmark} />
           </button>
         </span>
       </div>
@@ -4362,7 +5597,7 @@ function WorkspaceRenameEntry({
   );
 }
 
-function ActivityCard({
+const ActivityCard = memo(function ActivityCard({
   activity,
   inProgress = false,
 }: {
@@ -4419,6 +5654,22 @@ function ActivityCard({
         <ActivityDetail activity={activity} />
       )}
     </details>
+  );
+}, sameActivityCard);
+
+function sameActivityCard(
+  previous: { activity: Activity; inProgress?: boolean },
+  next: { activity: Activity; inProgress?: boolean },
+) {
+  return (
+    previous.inProgress === next.inProgress &&
+    previous.activity.kind === next.activity.kind &&
+    previous.activity.label === next.activity.label &&
+    previous.activity.detail === next.activity.detail &&
+    previous.activity.output === next.activity.output &&
+    previous.activity.isError === next.activity.isError &&
+    previous.activity.toolName === next.activity.toolName &&
+    previous.activity.toolUseId === next.activity.toolUseId
   );
 }
 

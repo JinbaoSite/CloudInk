@@ -8,7 +8,7 @@
     "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
-    "start": "tsx server/index.ts",
+    "start": "NODE_ENV=production tsx server/index.ts",
     "test": "node --test --import tsx server/*.test.ts"
   },
   "dependencies": {
@@ -28,10 +28,12 @@
     "@vitejs/plugin-react": "latest",
     "bcryptjs": "latest",
     "better-sqlite3": "latest",
+    "compression": "^1.8.2",
     "cookie-parser": "latest",
     "dotenv": "latest",
     "express": "latest",
     "jose": "latest",
+    "lucide-react": "^1.43.0",
     "multer": "^2.2.0",
     "react": "latest",
     "react-dom": "latest",
@@ -45,6 +47,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "latest",
+    "@types/compression": "^1.8.1",
     "@types/cookie-parser": "latest",
     "@types/express": "latest",
     "@types/multer": "^2.2.0",

@@ -344,19 +344,22 @@
 
 .composer-input-highlight mark {
   padding: 0;
-  border-radius: 3px;
-  background: #ebe8e1;
-  color: #4e4942;
+  border-radius: 0;
+  background: transparent;
+  color: #3278b8;
   font: inherit;
+  /* Faux-bold preserves the textarea's character metrics and caret alignment. */
+  -webkit-text-stroke: 0.22px currentColor;
+  text-shadow: 0 0 currentColor;
 }
 
 .composer-input-highlight mark.command {
-  color: #5d5850;
+  color: #3278b8;
 }
 
 .composer-input-highlight mark.mention {
-  background: #e4e7e8;
-  color: #46545a;
+  background: transparent;
+  color: #3278b8;
 }
 
 .composer-actions {
@@ -791,6 +794,53 @@
 
 .mode-menu-heading small {
   color: #a09a91;
+  font-weight: 400;
+}
+.backend-picker-options {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin: 0 4px 8px;
+  padding: 0 4px;
+  border-bottom: 1px solid #e5e7e9;
+}
+.composer .backend-picker-options button {
+  display: flex;
+  width: auto;
+  min-width: 0;
+  height: 35px;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-bottom: -1px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: #666d73;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.composer .backend-picker-options button:hover:not(:disabled) {
+  background: #f1f2f3;
+  color: #355f7a;
+}
+.composer .backend-picker-options button.active,
+.composer .backend-picker-options button.active:hover:not(:disabled) {
+  border-color: #e1e3e5;
+  border-bottom-color: var(--mm-canvas, #fff);
+  background: var(--mm-canvas, #fff);
+  color: #3278b8;
+}
+.composer .backend-picker-options button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.composer .backend-picker-options button small {
+  font-size: 9px;
   font-weight: 400;
 }
 .mode-menu > button {

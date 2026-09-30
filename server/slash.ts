@@ -42,6 +42,23 @@ const builtinDescriptions: Record<string, string> = {
   "workflow-launch-exec": "Execute a launched Claude Code workflow",
 };
 
+const codexBuiltinDescriptions: Record<string, string> = {
+  compact: "Compact the current conversation to free context space",
+  feedback: "Send feedback about Codex",
+  fork: "Fork the current conversation into a new session",
+  init: "Create an AGENTS.md file with workspace instructions",
+  logout: "Sign out of Codex",
+  mcp: "Show configured Model Context Protocol servers",
+  model: "Select the model and reasoning effort",
+  new: "Start a new conversation",
+  permissions: "Change what Codex can do without approval",
+  plan: "Switch to plan mode",
+  quit: "Exit Codex",
+  resume: "Resume a previous conversation",
+  review: "Review changes in the current workspace",
+  status: "Show the current session configuration and token usage",
+};
+
 function unquote(value: string) {
   const trimmed = value.trim();
   if (
@@ -67,6 +84,7 @@ function metadata(content: string, fallbackName: string) {
 function scanDefinitions(
   directory: string,
   descriptions: Map<string, string>,
+  discovered?: { commands: Set<string>; skills: Set<string> },
   depth = 0,
 ) {
   if (depth > 6) return;
@@ -80,28 +98,52 @@ function scanDefinitions(
     if (entry.isSymbolicLink()) continue;
     const target = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      scanDefinitions(target, descriptions, depth + 1);
+      scanDefinitions(target, descriptions, discovered, depth + 1);
       continue;
     }
     if (!entry.isFile()) continue;
     const isSkill = entry.name === "SKILL.md";
     const isCommand =
       [".md", ".toml"].includes(path.extname(entry.name).toLowerCase()) &&
-      target.split(path.sep).includes("commands");
+      target
+        .split(path.sep)
+        .some((part) => part === "commands" || part === "prompts");
     if (!isSkill && !isCommand) continue;
     try {
       const fallbackName = isSkill
         ? path.basename(path.dirname(target))
         : path.basename(entry.name, path.extname(entry.name));
       const parsed = metadata(fs.readFileSync(target, "utf8"), fallbackName);
-      if (parsed.name && parsed.description)
-        descriptions.set(parsed.name, parsed.description);
+      if (!parsed.name) continue;
+      if (parsed.description) descriptions.set(parsed.name, parsed.description);
+      if (isSkill) discovered?.skills.add(parsed.name);
+      else discovered?.commands.add(parsed.name);
     } catch {}
   }
 }
 
-export function discoverSlashDescriptions(workspace: string) {
-  const descriptions = new Map(Object.entries(builtinDescriptions));
+export function discoverSlashDescriptions(
+  workspace: string,
+  backend: "claude" | "codex" = "claude",
+) {
+  const descriptions = new Map(
+    Object.entries(
+      backend === "codex" ? codexBuiltinDescriptions : builtinDescriptions,
+    ),
+  );
+  if (backend === "codex") {
+    const codexHome =
+      process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+    scanDefinitions(path.join(codexHome, "plugins"), descriptions);
+    scanDefinitions(path.join(codexHome, "prompts"), descriptions);
+    scanDefinitions(path.join(codexHome, "commands"), descriptions);
+    scanDefinitions(path.join(codexHome, "skills"), descriptions);
+    scanDefinitions(path.join(workspace, ".codex", "prompts"), descriptions);
+    scanDefinitions(path.join(workspace, ".codex", "commands"), descriptions);
+    scanDefinitions(path.join(workspace, ".codex", "skills"), descriptions);
+    scanDefinitions(path.join(workspace, ".agents", "skills"), descriptions);
+    return descriptions;
+  }
   const claudeHome = path.join(os.homedir(), ".claude");
   // Plugin definitions are lower priority than explicit user and project files.
   scanDefinitions(path.join(claudeHome, "plugins"), descriptions);
@@ -110,6 +152,32 @@ export function discoverSlashDescriptions(workspace: string) {
   scanDefinitions(path.join(workspace, ".claude", "commands"), descriptions);
   scanDefinitions(path.join(workspace, ".claude", "skills"), descriptions);
   return descriptions;
+}
+
+export function discoverCodexCapabilities(workspace: string) {
+  const descriptions = new Map(Object.entries(codexBuiltinDescriptions));
+  const discovered = {
+    commands: new Set(Object.keys(codexBuiltinDescriptions)),
+    skills: new Set<string>(),
+  };
+  const codexHome =
+    process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  for (const directory of [
+    path.join(codexHome, "plugins"),
+    path.join(codexHome, "prompts"),
+    path.join(codexHome, "commands"),
+    path.join(codexHome, "skills"),
+    path.join(workspace, ".codex", "prompts"),
+    path.join(workspace, ".codex", "commands"),
+    path.join(workspace, ".codex", "skills"),
+    path.join(workspace, ".agents", "skills"),
+  ])
+    scanDefinitions(directory, descriptions, discovered);
+  return {
+    slashCommands: [...discovered.commands].sort(),
+    skills: [...discovered.skills].sort(),
+    descriptions,
+  };
 }
 
 export function descriptionForSlashItem(

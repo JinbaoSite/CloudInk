@@ -15,7 +15,13 @@ export default defineConfig(({ mode }) => {
     .join("/");
 
   return {
+    base: env.BASE_PATH || "/",
     plugins: [react()],
+    build: {
+      // Keep previous hashed chunks so tabs opened before a deployment can
+      // still resolve their lazy imports until they reload the new HTML.
+      emptyOutDir: false,
+    },
     server: {
       host: "0.0.0.0",
       port: webPort,

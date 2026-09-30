@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import CodeMirror from "@uiw/react-codemirror";
 import type { Extension } from "@codemirror/state";
 import {
-  faBars,
-  faEye,
-  faFloppyDisk,
-  faPen,
-  faXmark,
-} from "@fortawesome/free-solid-svg-icons";
+  Circle,
+  Eye,
+  Menu,
+  Pencil,
+  Save,
+  X,
+} from "lucide-react";
 import MarkdownMessage from "./MarkdownMessage";
+
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export type OpenWorkspaceFile = {
   name: string;
@@ -85,7 +87,7 @@ function isHtmlFile(filePath: string) {
 
 function htmlPreviewDocument(content: string, filePath: string) {
   const directory = filePath.split("/").slice(0, -1).map(encodeURIComponent);
-  const previewBase = `${window.location.origin}/api/workspace/preview/${directory.length ? `${directory.join("/")}/` : ""}`;
+  const previewBase = `${window.location.origin}${BASE_PATH}/api/workspace/preview/${directory.length ? `${directory.join("/")}/` : ""}`;
   const base = `<base href="${previewBase}">`;
   return /<head(?:\s[^>]*)?>/i.test(content)
     ? content.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${base}`)
@@ -155,7 +157,7 @@ export default function WorkspaceEditor({
           aria-label="打开侧边栏"
           onClick={onOpenSidebar}
         >
-          <FontAwesomeIcon icon={faBars} />
+          <Menu aria-hidden="true" />
         </button>
         {files.map((file) => {
           const fileDirty = file.content !== file.savedContent;
@@ -173,7 +175,7 @@ export default function WorkspaceEditor({
                 onClick={() => onActivate(file.path)}
               >
                 <span className="workspace-tab-state" aria-hidden="true">
-                  {fileDirty ? "●" : ""}
+                  {fileDirty ? <Circle fill="currentColor" /> : null}
                 </span>
                 <span>{file.name}</span>
               </button>
@@ -183,7 +185,7 @@ export default function WorkspaceEditor({
                 aria-label={`关闭 ${file.name}`}
                 onClick={() => onClose(file.path)}
               >
-                <FontAwesomeIcon icon={faXmark} />
+                <X aria-hidden="true" />
               </button>
             </div>
           );
@@ -212,7 +214,7 @@ export default function WorkspaceEditor({
                   aria-pressed={fileView === "preview"}
                   onClick={() => setFileView("preview")}
                 >
-                  <FontAwesomeIcon icon={faEye} />
+                  <Eye aria-hidden="true" />
                   预览
                 </button>
                 <button
@@ -221,7 +223,7 @@ export default function WorkspaceEditor({
                   aria-pressed={fileView === "edit"}
                   onClick={() => setFileView("edit")}
                 >
-                  <FontAwesomeIcon icon={faPen} />
+                  <Pencil aria-hidden="true" />
                   编辑
                 </button>
               </div>
@@ -279,7 +281,7 @@ export default function WorkspaceEditor({
           disabled={activeFile.loading || Boolean(activeFile.error) || !dirty}
           onClick={() => onSave(activeFile.path)}
         >
-          <FontAwesomeIcon icon={faFloppyDisk} />
+          <Save aria-hidden="true" />
           {savingPath === activeFile.path
             ? "保存中…"
             : dirty

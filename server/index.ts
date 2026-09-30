@@ -1,14 +1,20 @@
 import "dotenv/config";
 import express from "express";
+import compression from "compression";
 import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import http from "node:http";
 import multer from "multer";
 import { z } from "zod";
 import { db, workspaceRoot } from "./db.js";
-import { descriptionForSlashItem, discoverSlashDescriptions } from "./slash.js";
+import {
+  descriptionForSlashItem,
+  discoverCodexCapabilities,
+  discoverSlashDescriptions,
+} from "./slash.js";
 import {
   enqueueScheduledTask,
   nextRunAt,
@@ -41,7 +47,27 @@ import {
   textFromEvent,
   thinkingDeltaFromEvent,
 } from "./claude.js";
+import {
+  activitiesFromCodexEvent,
+  createCodexAnswerTracker,
+  codexAvailable,
+  codexThreadIdFromEvent,
+  configuredCodexModels,
+  currentCodexModel,
+  metricsForCodexTurn,
+  metricsFromCodexEvent,
+  runCodex,
+  textFromCodexEvent,
+} from "./codex.js";
 const app = express();
+app.use(
+  compression({
+    filter: (_req, res) =>
+      !String(res.getHeader("Content-Type") || "").includes(
+        "application/x-ndjson",
+      ) && compression.filter(_req, res),
+  }),
+);
 const appName = process.env.APP_NAME?.trim().slice(0, 60) || "CloudInk";
 const ROOT_USERNAME = "root";
 const rootPassword = process.env.ROOT_PASSWORD;
@@ -83,6 +109,93 @@ type ActiveClaudeRun = {
   startedAt: string;
 };
 const activeClaudeRuns = new Map<string, ActiveClaudeRun>();
+function requestedProjectId(req: express.Request) {
+  return typeof req.query.project_id === "string"
+    ? req.query.project_id
+    : typeof req.headers["x-cloudink-project"] === "string"
+      ? req.headers["x-cloudink-project"]
+      : "";
+}
+function projectWorkspaceFor(userId: string, projectId = "") {
+  const user = db
+    .prepare("SELECT username FROM users WHERE id=?")
+    .get(userId) as { username: string } | undefined;
+  if (!user) return null;
+  const legacyRoot =
+    user.username === ROOT_USERNAME
+      ? workspaceRoot
+      : path.join(workspaceRoot, user.username);
+  if (!projectId) {
+    fs.mkdirSync(legacyRoot, { recursive: true });
+    return legacyRoot;
+  }
+  const project = db
+    .prepare("SELECT directory FROM projects WHERE id=? AND user_id=?")
+    .get(projectId, userId) as { directory: string } | undefined;
+  if (!project) return null;
+  const legacyWorkspace = path.join(
+    legacyRoot,
+    ".cloudink-projects",
+    project.directory,
+  );
+  if (
+    /^[a-f0-9-]{36}$/i.test(project.directory) &&
+    fs.existsSync(legacyWorkspace)
+  )
+    return legacyWorkspace;
+  try {
+    return resolveWorkspaceDirectory(legacyRoot, project.directory);
+  } catch {
+    return null;
+  }
+}
+function ensureProjectDirectory(userId: string, directory: string) {
+  const ordinaryWorkspace = projectWorkspaceFor(userId);
+  if (!ordinaryWorkspace) throw new Error("普通工作区不存在");
+  const user = db
+    .prepare("SELECT username FROM users WHERE id=?")
+    .get(userId) as { username: string } | undefined;
+  if (!user) throw new Error("用户不存在");
+  const entered = directory.trim().replace(/\\/g, "/");
+  const userPrefix = `/${user.username}/`;
+  if (entered.startsWith("/") && !entered.startsWith(userPrefix))
+    throw new Error(`项目目录必须位于 /${user.username}/ 下`);
+  const normalized = (
+    entered.startsWith(userPrefix) ? entered.slice(userPrefix.length) : entered
+  ).replace(/^\.\//, "");
+  if (!normalized) throw new Error("请选择或创建项目目录");
+  const target = resolveWorkspaceFile(ordinaryWorkspace, normalized);
+  fs.mkdirSync(target, { recursive: true });
+  return {
+    absolutePath: resolveWorkspaceDirectory(ordinaryWorkspace, normalized),
+    directory: normalized,
+  };
+}
+// Keep the finance application isolated while publishing it below /car.
+app.use("/car", (req, res) => {
+  const proxyRequest = http.request(
+    {
+      hostname: "127.0.0.1",
+      port: 3000,
+      method: req.method,
+      path: req.originalUrl,
+      headers: { ...req.headers, host: "127.0.0.1:3000" },
+    },
+    (proxyResponse) => {
+      res.status(proxyResponse.statusCode || 502);
+      for (const [name, value] of Object.entries(proxyResponse.headers)) {
+        if (value !== undefined) res.setHeader(name, value);
+      }
+      proxyResponse.pipe(res);
+    },
+  );
+  proxyRequest.on("error", () => {
+    if (!res.headersSent)
+      res.status(502).send("Car finance service unavailable");
+    else res.end();
+  });
+  req.pipe(proxyRequest);
+});
 app.use(express.json({ limit: "6mb" }));
 app.use(cookieParser());
 app.get("/api/public-config", (_req, res) => res.json({ appName }));
@@ -267,16 +380,8 @@ const upload = multer({
   storage: multer.diskStorage({
     destination: (req, _file, done) => {
       const uid = (req as AuthedRequest).userId;
-      const user = db
-        .prepare("SELECT username FROM users WHERE id=?")
-        .get(uid) as { username: string } | undefined;
-      if (!user) return done(new Error("用户不存在"), "");
-      const isWorkspaceUpload = typeof req.query.directory === "string";
-      const workspace =
-        user.username === ROOT_USERNAME && isWorkspaceUpload
-          ? workspaceRoot
-          : path.join(workspaceRoot, user.username);
-      fs.mkdirSync(workspace, { recursive: true });
+      const workspace = projectWorkspaceFor(uid, requestedProjectId(req));
+      if (!workspace) return done(new Error("项目不存在"), "");
       try {
         const requestedDirectory =
           typeof req.query.directory === "string" ? req.query.directory : "";
@@ -296,14 +401,8 @@ const upload = multer({
       const stem = path.basename(name, extension);
       try {
         const uid = (req as AuthedRequest).userId;
-        const user = db
-          .prepare("SELECT username FROM users WHERE id=?")
-          .get(uid) as { username: string } | undefined;
-        if (!user) throw new Error("用户不存在");
-        const workspace =
-          user.username === ROOT_USERNAME
-            ? workspaceRoot
-            : path.join(workspaceRoot, user.username);
+        const workspace = projectWorkspaceFor(uid, requestedProjectId(req));
+        if (!workspace) throw new Error("项目不存在");
         const directory = resolveWorkspaceDirectory(
           workspace,
           req.query.directory,
@@ -419,16 +518,40 @@ app.post("/api/me/password", requireAuth, async (req, res) => {
   );
   return res.status(204).end();
 });
-app.get("/api/config", requireAuth, async (_req, res) =>
-  detectedModel.then((model) =>
-    res.json({ model, models: configuredClaudeModels(model), appName }),
-  ),
-);
+app.get("/api/config", requireAuth, async (_req, res) => {
+  const [model, isCodexAvailable] = await Promise.all([
+    detectedModel,
+    codexAvailable(),
+  ]);
+  const codexModel = currentCodexModel();
+  return res.json({
+    model,
+    models: configuredClaudeModels(model),
+    appName,
+    backends: [
+      {
+        value: "claude",
+        label: "Claude Code",
+        available: true,
+        model,
+        models: configuredClaudeModels(model),
+      },
+      {
+        value: "codex",
+        label: "Codex",
+        available: isCodexAvailable,
+        model: codexModel,
+        models: configuredCodexModels(),
+      },
+    ],
+  });
+});
 const scheduledTaskPayload = z.object({
   name: z.string().trim().min(1).max(80),
   prompt: z.string().trim().min(1).max(100000),
   cronExpression: z.string().trim().min(5).max(120),
   timezone: z.string().trim().min(1).max(80).default("Asia/Shanghai"),
+  backend: z.enum(["claude", "codex"]).default("claude"),
   model: z.string().trim().max(160).nullable().optional(),
   mode: z.enum(["auto", "plan", "manual", "acceptEdits"]).default("auto"),
   overlapPolicy: z.enum(["skip", "queue"]).default("skip"),
@@ -465,9 +588,9 @@ app.post("/api/scheduled-tasks", requireAuth, (req, res) => {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   db.prepare(
-    `INSERT INTO scheduled_tasks(id,user_id,name,prompt,cron_expression,timezone,model,
+    `INSERT INTO scheduled_tasks(id,user_id,name,prompt,cron_expression,timezone,backend,model,
      permission_mode,overlap_policy,enabled,next_run_at,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     id,
     (req as AuthedRequest).userId,
@@ -475,6 +598,7 @@ app.post("/api/scheduled-tasks", requireAuth, (req, res) => {
     payload.data.prompt,
     payload.data.cronExpression,
     payload.data.timezone,
+    payload.data.backend,
     payload.data.model || null,
     payload.data.mode,
     payload.data.overlapPolicy,
@@ -503,7 +627,7 @@ app.put("/api/scheduled-tasks/:id", requireAuth, (req, res) => {
       .json({ error: `Cron 表达式无效：${(error as Error).message}` });
   }
   db.prepare(
-    `UPDATE scheduled_tasks SET name=?,prompt=?,cron_expression=?,timezone=?,model=?,
+    `UPDATE scheduled_tasks SET name=?,prompt=?,cron_expression=?,timezone=?,backend=?,model=?,
      permission_mode=?,overlap_policy=?,enabled=?,next_run_at=?,updated_at=?
      WHERE id=? AND user_id=?`,
   ).run(
@@ -511,6 +635,7 @@ app.put("/api/scheduled-tasks/:id", requireAuth, (req, res) => {
     payload.data.prompt,
     payload.data.cronExpression,
     payload.data.timezone,
+    payload.data.backend,
     payload.data.model || null,
     payload.data.mode,
     payload.data.overlapPolicy,
@@ -616,6 +741,235 @@ app.get("/api/admin/users", requireAuth, requireRoot, (_req, res) => {
     .all();
   return res.json({ users });
 });
+app.get("/api/projects", requireAuth, (req, res) => {
+  const userId = (req as AuthedRequest).userId;
+  const user = db
+    .prepare("SELECT username FROM users WHERE id=?")
+    .get(userId) as { username: string } | undefined;
+  if (!user) return res.status(401).json({ error: "用户不存在" });
+  const projects = db
+    .prepare(
+      `SELECT p.id,p.name,p.directory,p.source_directory,p.favorite,p.created_at,p.updated_at,
+              COUNT(s.id) AS session_count
+       FROM projects p LEFT JOIN sessions s ON s.project_id=p.id
+       WHERE p.user_id=? GROUP BY p.id
+       ORDER BY p.favorite DESC,p.updated_at DESC`,
+    )
+    .all(userId) as Array<Record<string, unknown> & { directory: string }>;
+  const workspace = projectWorkspaceFor(userId);
+  return res.json({
+    projects: projects.map((project) => {
+      const resolved = projectWorkspaceFor(userId, String(project.id));
+      const directory =
+        workspace && resolved
+          ? path.relative(workspace, resolved).split(path.sep).join("/")
+          : project.directory;
+      const displayedDirectory = `/${user.username}/${directory}`;
+      return {
+        ...project,
+        directory: displayedDirectory,
+        source_directory: displayedDirectory,
+      };
+    }),
+  });
+});
+app.get("/api/projects/source-directories", requireAuth, (req, res) => {
+  const userId = (req as AuthedRequest).userId;
+  const workspace = projectWorkspaceFor(userId);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  const user = db
+    .prepare("SELECT username FROM users WHERE id=?")
+    .get(userId) as { username: string } | undefined;
+  if (!user) return res.status(401).json({ error: "用户不存在" });
+  try {
+    const directories: string[] = [];
+    const visit = (directory: string, relative = "", depth = 0) => {
+      if (depth > 8) return;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (
+          !entry.isDirectory() ||
+          entry.isSymbolicLink() ||
+          entry.name.startsWith(".") ||
+          entry.name === "node_modules"
+        )
+          continue;
+        const childRelative = relative
+          ? `${relative}/${entry.name}`
+          : entry.name;
+        directories.push(childRelative);
+        visit(path.join(directory, entry.name), childRelative, depth + 1);
+      }
+    };
+    visit(workspace);
+    directories.sort((a, b) => a.localeCompare(b));
+    return res.json({
+      directories: directories.map(
+        (directory) => `/${user.username}/${directory}`,
+      ),
+    });
+  } catch {
+    return res.status(500).json({ error: "无法读取项目目录" });
+  }
+});
+app.post("/api/projects", requireAuth, (req, res) => {
+  const payload = z
+    .object({
+      name: z.string().trim().min(1).max(60),
+      directory: z.string().trim().min(1).max(500).optional(),
+      source_directory: z.string().trim().max(500).optional(),
+    })
+    .transform((value) => ({
+      name: value.name,
+      directory: value.directory || value.source_directory || "",
+    }))
+    .safeParse(req.body);
+  if (!payload.success)
+    return res
+      .status(400)
+      .json({ error: "项目名称不能为空且不能超过 60 个字符" });
+  const userId = (req as AuthedRequest).userId;
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  try {
+    const projectDirectory = ensureProjectDirectory(
+      userId,
+      payload.data.directory,
+    );
+    db.prepare(
+      "INSERT INTO projects(id,user_id,name,directory,source_directory,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+    ).run(
+      id,
+      userId,
+      payload.data.name,
+      projectDirectory.directory,
+      projectDirectory.directory,
+      now,
+      now,
+    );
+    return res.status(201).json({
+      id,
+      name: payload.data.name,
+      directory: `/${(db.prepare("SELECT username FROM users WHERE id=?").get(userId) as { username: string }).username}/${projectDirectory.directory}`,
+      source_directory: `/${(db.prepare("SELECT username FROM users WHERE id=?").get(userId) as { username: string }).username}/${projectDirectory.directory}`,
+      created_at: now,
+      updated_at: now,
+      session_count: 0,
+    });
+  } catch (error) {
+    db.prepare("DELETE FROM projects WHERE id=? AND user_id=?").run(id, userId);
+    return res.status(409).json({
+      error: String((error as Error).message).includes("UNIQUE")
+        ? "同名项目已存在"
+        : (error as Error).message || "项目创建失败",
+    });
+  }
+});
+app.post("/api/projects/:id/favorite", requireAuth, (req, res) => {
+  const payload = z.object({ favorite: z.boolean() }).safeParse(req.body);
+  if (!payload.success) return res.status(400).json({ error: "置顶状态无效" });
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      "UPDATE projects SET favorite=?,updated_at=? WHERE id=? AND user_id=?",
+    )
+    .run(
+      payload.data.favorite ? 1 : 0,
+      now,
+      req.params.id,
+      (req as AuthedRequest).userId,
+    );
+  if (!result.changes) return res.status(404).json({ error: "项目不存在" });
+  return res.json({
+    id: req.params.id,
+    favorite: payload.data.favorite ? 1 : 0,
+    updated_at: now,
+  });
+});
+app.patch("/api/projects/:id", requireAuth, (req, res) => {
+  const payload = z
+    .object({
+      name: z.string().trim().min(1).max(60),
+      directory: z.string().trim().min(1).max(500).optional(),
+      source_directory: z.string().trim().max(500).optional(),
+    })
+    .transform((value) => ({
+      name: value.name,
+      directory: value.directory || value.source_directory || "",
+    }))
+    .safeParse(req.body);
+  if (!payload.success)
+    return res
+      .status(400)
+      .json({ error: "项目名称不能为空且不能超过 60 个字符" });
+  try {
+    const now = new Date().toISOString();
+    const userId = (req as AuthedRequest).userId;
+    const existing = db
+      .prepare("SELECT directory FROM projects WHERE id=? AND user_id=?")
+      .get(req.params.id, userId) as { directory: string } | undefined;
+    if (!existing) return res.status(404).json({ error: "项目不存在" });
+    const projectDirectory = ensureProjectDirectory(
+      userId,
+      payload.data.directory,
+    );
+    const result = db
+      .prepare(
+        "UPDATE projects SET name=?,directory=?,source_directory=?,updated_at=? WHERE id=? AND user_id=?",
+      )
+      .run(
+        payload.data.name,
+        projectDirectory.directory,
+        projectDirectory.directory,
+        now,
+        req.params.id,
+        userId,
+      );
+    if (!result.changes) return res.status(404).json({ error: "项目不存在" });
+    const user = db
+      .prepare("SELECT username FROM users WHERE id=?")
+      .get(userId) as {
+      username: string;
+    };
+    const displayedDirectory = `/${user.username}/${projectDirectory.directory}`;
+    return res.json({
+      id: req.params.id,
+      name: payload.data.name,
+      directory: displayedDirectory,
+      source_directory: displayedDirectory,
+      updated_at: now,
+    });
+  } catch {
+    return res.status(409).json({ error: "同名项目已存在" });
+  }
+});
+app.delete("/api/projects/:id", requireAuth, (req, res) => {
+  const userId = (req as AuthedRequest).userId;
+  const project = db
+    .prepare("SELECT id,directory FROM projects WHERE id=? AND user_id=?")
+    .get(req.params.id, userId) as
+    { id: string; directory: string } | undefined;
+  if (!project) return res.status(404).json({ error: "项目不存在" });
+  const runningSession = db
+    .prepare("SELECT id FROM sessions WHERE project_id=?")
+    .all(project.id)
+    .some((session) => activeClaudeRuns.has((session as { id: string }).id));
+  if (runningSession)
+    return res.status(409).json({ error: "项目中仍有任务运行，请稍后再删除" });
+  try {
+    db.transaction(() => {
+      db.prepare("UPDATE sessions SET project_id=NULL WHERE project_id=?").run(
+        project.id,
+      );
+      db.prepare("DELETE FROM projects WHERE id=? AND user_id=?").run(
+        project.id,
+        userId,
+      );
+    })();
+    return res.status(204).end();
+  } catch {
+    return res.status(500).json({ error: "项目删除失败" });
+  }
+});
 app.post(
   "/api/admin/registrations/:id/approve",
   requireAuth,
@@ -653,14 +1007,17 @@ app.delete(
 );
 app.get("/api/slash-items", requireAuth, async (req, res) => {
   const uid = (req as AuthedRequest).userId;
-  const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
-    { username: string } | undefined;
-  if (!user) return res.status(401).json({ error: "用户不存在" });
-  const workspace = path.join(workspaceRoot, user.username);
-  fs.mkdirSync(workspace, { recursive: true });
-  const capabilities = await detectClaudeCapabilities(workspace);
+  const workspace = projectWorkspaceFor(uid, requestedProjectId(req));
+  if (!workspace) return res.status(404).json({ error: "项目不存在" });
+  const backend = req.query.backend === "codex" ? "codex" : "claude";
+  const codexCapabilities =
+    backend === "codex" ? discoverCodexCapabilities(workspace) : null;
+  const capabilities =
+    codexCapabilities || (await detectClaudeCapabilities(workspace));
   const skillNames = new Set(capabilities.skills);
-  const descriptions = discoverSlashDescriptions(workspace);
+  const descriptions =
+    codexCapabilities?.descriptions ||
+    discoverSlashDescriptions(workspace, backend);
   const item = (name: string, kind: "command" | "skill") => ({
     name: `/${name}`,
     description: descriptionForSlashItem(descriptions, name, kind),
@@ -674,16 +1031,16 @@ app.get("/api/slash-items", requireAuth, async (req, res) => {
 });
 app.get("/api/workspace/files", requireAuth, (req, res) => {
   const uid = (req as AuthedRequest).userId;
-  const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
-    { username: string } | undefined;
-  if (!user) return res.status(401).json({ error: "用户不存在" });
-
-  const workspace =
-    user.username === ROOT_USERNAME
-      ? workspaceRoot
-      : path.join(workspaceRoot, user.username);
-  fs.mkdirSync(workspace, { recursive: true });
-  const ignored = new Set([".git", "node_modules", ".claude", "dist", "build"]);
+  const workspace = projectWorkspaceFor(uid, requestedProjectId(req));
+  if (!workspace) return res.status(404).json({ error: "项目不存在" });
+  const ignored = new Set([
+    ".git",
+    "node_modules",
+    ".claude",
+    ".cloudink-projects",
+    "dist",
+    "build",
+  ]);
   const files: Array<{ name: string; path: string; size: number }> = [];
   const directories: string[] = [];
   const pending = [workspace];
@@ -726,12 +1083,7 @@ app.get("/api/workspace/files", requireAuth, (req, res) => {
 });
 function userWorkspace(req: express.Request) {
   const uid = (req as AuthedRequest).userId;
-  const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
-    { username: string } | undefined;
-  if (!user) return null;
-  return user.username === ROOT_USERNAME
-    ? workspaceRoot
-    : path.join(workspaceRoot, user.username);
+  return projectWorkspaceFor(uid, requestedProjectId(req));
 }
 app.get(/^\/api\/workspace\/preview\/(.+)$/, requireAuth, (req, res) => {
   const workspace = userWorkspace(req);
@@ -1103,11 +1455,8 @@ app.post("/api/files", requireAuth, (req, res) => {
 
     const saved = files.map((file) => {
       const original = path.basename(file.originalname).slice(0, 180);
-      const workspace =
-        user.username === ROOT_USERNAME &&
-        typeof req.query.directory === "string"
-          ? workspaceRoot
-          : path.join(workspaceRoot, user.username);
+      const workspace = projectWorkspaceFor(uid, requestedProjectId(req));
+      if (!workspace) throw new Error("项目不存在");
       return {
         name: original,
         path: path.relative(workspace, file.path).split(path.sep).join("/"),
@@ -1122,40 +1471,67 @@ app.get("/api/sessions", requireAuth, (req, res) => {
   const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
     { username: string } | undefined;
   if (!user) return res.status(401).json({ error: "用户不存在" });
+  const projectId =
+    typeof req.query.project_id === "string" ? req.query.project_id : "";
+  if (
+    projectId &&
+    projectId !== "unassigned" &&
+    !db
+      .prepare("SELECT 1 FROM projects WHERE id=? AND user_id=?")
+      .get(projectId, uid)
+  )
+    return res.status(404).json({ error: "项目不存在" });
   const sessions =
     user.username === ROOT_USERNAME
       ? db
           .prepare(
-            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,u.username
+            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,s.backend,s.project_id,u.username
            FROM sessions s JOIN users u ON u.id=s.user_id
-           WHERE NOT EXISTS (SELECT 1 FROM scheduled_task_runs r WHERE r.session_id=s.id)
+           WHERE (?='' OR (?='unassigned' AND s.project_id IS NULL) OR s.project_id=?)
+             AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs r WHERE r.session_id=s.id)
            ORDER BY u.username,s.favorite DESC,s.updated_at DESC`,
           )
-          .all()
+          .all(projectId, projectId, projectId)
       : db
           .prepare(
-            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,u.username
+            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,s.backend,s.project_id,u.username
            FROM sessions s JOIN users u ON u.id=s.user_id
            WHERE s.user_id=?
+             AND (?='' OR (?='unassigned' AND s.project_id IS NULL) OR s.project_id=?)
              AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs r WHERE r.session_id=s.id)
            ORDER BY s.favorite DESC,s.updated_at DESC`,
           )
-          .all(uid);
+          .all(uid, projectId, projectId, projectId);
   return res.json(sessions);
 });
 app.post("/api/sessions", requireAuth, (req, res) => {
+  const backend = z
+    .enum(["claude", "codex"])
+    .catch("claude")
+    .parse(req.body?.backend);
   const id = crypto.randomUUID(),
     claude = crypto.randomUUID(),
     now = new Date().toISOString();
+  const userId = (req as AuthedRequest).userId;
+  const projectId = z.string().min(1).max(100).safeParse(req.body?.project_id);
+  const project = projectId.success
+    ? (db
+        .prepare("SELECT id FROM projects WHERE id=? AND user_id=?")
+        .get(projectId.data, userId) as { id: string } | undefined)
+    : undefined;
+  if (projectId.success && !project)
+    return res.status(404).json({ error: "项目不存在" });
   db.prepare(
-    "INSERT INTO sessions(id,user_id,title,claude_session_id,created_at,updated_at,favorite) VALUES(?,?,?,?,?,?,0)",
-  ).run(id, (req as AuthedRequest).userId, "新对话", claude, now, now);
+    "INSERT INTO sessions(id,user_id,title,claude_session_id,created_at,updated_at,favorite,backend,project_id) VALUES(?,?,?,?,?,?,0,?,?)",
+  ).run(id, userId, "新对话", claude, now, now, backend, project?.id || null);
   res.status(201).json({
     id,
     title: "新对话",
     created_at: now,
     updated_at: now,
     favorite: 0,
+    backend,
+    project_id: project?.id || null,
   });
 });
 app.post("/api/sessions/:id/favorite", requireAuth, (req, res) => {
@@ -1168,6 +1544,49 @@ app.post("/api/sessions/:id/favorite", requireAuth, (req, res) => {
   if (!result.changes) return res.status(404).json({ error: "会话不存在" });
   return res.json({ id: req.params.id, favorite });
 });
+app.patch("/api/sessions/:id", requireAuth, (req, res) => {
+  const payload = z
+    .object({
+      title: z.string().trim().min(1).max(120).optional(),
+      project_id: z.string().min(1).max(100).nullable().optional(),
+    })
+    .refine(
+      (value) => value.title !== undefined || value.project_id !== undefined,
+    )
+    .safeParse(req.body);
+  if (!payload.success)
+    return res.status(400).json({ error: "会话修改参数无效" });
+  const userId = (req as AuthedRequest).userId;
+  const session = db
+    .prepare(
+      "SELECT id,title,project_id FROM sessions WHERE id=? AND user_id=?",
+    )
+    .get(req.params.id, userId) as
+    { id: string; title: string; project_id: string | null } | undefined;
+  if (!session) return res.status(404).json({ error: "会话不存在" });
+  if (
+    payload.data.project_id &&
+    !db
+      .prepare("SELECT 1 FROM projects WHERE id=? AND user_id=?")
+      .get(payload.data.project_id, userId)
+  )
+    return res.status(404).json({ error: "目标项目不存在" });
+  const title = payload.data.title ?? session.title;
+  const projectId =
+    payload.data.project_id === undefined
+      ? session.project_id
+      : payload.data.project_id;
+  const now = new Date().toISOString();
+  db.prepare(
+    "UPDATE sessions SET title=?,project_id=?,updated_at=? WHERE id=? AND user_id=?",
+  ).run(title, projectId, now, session.id, userId);
+  return res.json({
+    id: session.id,
+    title,
+    project_id: projectId,
+    updated_at: now,
+  });
+});
 app.get("/api/sessions/:id/messages", requireAuth, (req, res) => {
   const uid = (req as AuthedRequest).userId;
   const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
@@ -1177,12 +1596,37 @@ app.get("/api/sessions/:id/messages", requireAuth, (req, res) => {
     .prepare("SELECT 1 FROM sessions WHERE id=? AND (user_id=? OR ?=1)")
     .get(req.params.id, uid, user.username === ROOT_USERNAME ? 1 : 0);
   if (!ok) return res.status(404).json({ error: "会话不存在" });
+  const afterCursor = z.coerce
+    .number()
+    .int()
+    .nonnegative()
+    .catch(0)
+    .parse(req.query.after_cursor);
+  const includeRecent = req.query.include_recent === "1";
   res.json(
-    db
-      .prepare(
-        "SELECT id,role,content,created_at FROM messages WHERE session_id=? ORDER BY created_at",
-      )
-      .all(req.params.id),
+    includeRecent
+      ? db
+          .prepare(
+            `SELECT rowid AS cursor,id,role,content,created_at
+             FROM messages
+             WHERE session_id=? AND (
+               rowid>? OR rowid IN (
+                 SELECT rowid FROM messages
+                 WHERE session_id=? AND role='activity'
+                 ORDER BY rowid DESC LIMIT 12
+               )
+             )
+             ORDER BY rowid`,
+          )
+          .all(req.params.id, afterCursor, req.params.id)
+      : db
+          .prepare(
+            `SELECT rowid AS cursor,id,role,content,created_at
+             FROM messages
+             WHERE session_id=? AND rowid>?
+             ORDER BY rowid`,
+          )
+          .all(req.params.id, afterCursor),
   );
 });
 app.delete("/api/sessions/:id", requireAuth, (req, res) => {
@@ -1239,7 +1683,8 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
         .max(10)
         .default([]),
       mode: z.enum(["auto", "plan", "manual", "acceptEdits"]).default("auto"),
-      model: z.string().trim().min(1).max(160).regex(/^\S+$/).optional(),
+      backend: z.enum(["claude", "codex"]).default("claude"),
+      model: z.string().trim().min(1).max(160).optional(),
     })
     .safeParse(req.body);
   if (
@@ -1251,7 +1696,12 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   const user = db.prepare("SELECT username FROM users WHERE id=?").get(uid) as
     { username: string } | undefined;
   if (!user) return res.status(401).json({ error: "用户不存在" });
-  const workspace = path.join(workspaceRoot, user.username);
+  const s = db
+    .prepare("SELECT * FROM sessions WHERE id=? AND user_id=?")
+    .get(req.params.id, uid) as any;
+  if (!s) return res.status(404).json({ error: "会话不存在" });
+  const workspace = projectWorkspaceFor(uid, s.project_id || "");
+  if (!workspace) return res.status(404).json({ error: "项目不存在" });
   for (const attachment of body.data.attachments) {
     const absolutePath = path.resolve(workspace, attachment.path);
     if (
@@ -1260,10 +1710,6 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     )
       return res.status(400).json({ error: "附件不存在" });
   }
-  const s = db
-    .prepare("SELECT * FROM sessions WHERE id=? AND user_id=?")
-    .get(req.params.id, uid) as any;
-  if (!s) return res.status(404).json({ error: "会话不存在" });
   if (activeClaudeRuns.has(s.id))
     return res.status(409).json({ error: "该会话仍有任务在后台运行" });
   const count = (
@@ -1271,6 +1717,10 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
       .prepare("SELECT count(*) n FROM messages WHERE session_id=?")
       .get(s.id) as any
   ).n;
+  const backend = (count === 0 ? body.data.backend : s.backend || "claude") as
+    "claude" | "codex";
+  if (count === 0 && s.backend !== backend)
+    db.prepare("UPDATE sessions SET backend=? WHERE id=?").run(backend, s.id);
   const now = new Date().toISOString();
   const displayContent = [
     body.data.content.trim(),
@@ -1352,6 +1802,184 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   activeClaudeRuns.set(s.id, activeRun);
   const cwd = workspace;
   fs.mkdirSync(cwd, { recursive: true });
+  if (backend === "codex") {
+    if (!(await codexAvailable())) {
+      activeClaudeRuns.delete(s.id);
+      return res.end(
+        `${JSON.stringify({ type: "error", error: "服务器尚未安装或配置 Codex CLI" })}\n`,
+      );
+    }
+    const startedAt = Date.now();
+    const previousMetricsRow = db
+      .prepare(
+        "SELECT content FROM messages WHERE session_id=? AND role='metrics' ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(s.id) as { content: string } | undefined;
+    let previousCodexMetrics: Record<string, unknown> | null = null;
+    try {
+      previousCodexMetrics = previousMetricsRow
+        ? JSON.parse(previousMetricsRow.content)
+        : null;
+    } catch {}
+    const child = runCodex({
+      prompt,
+      cwd,
+      writableRoot: projectWorkspaceFor(uid) || cwd,
+      threadId: restartClaudeSession
+        ? undefined
+        : s.codex_thread_id || undefined,
+      permissionMode: body.data.mode,
+      model: body.data.model,
+      signal: abort.signal,
+    });
+    const answerTracker = createCodexAnswerTracker();
+    let stderr = "";
+    let buffer = "";
+    let responseMetrics: ReturnType<typeof metricsFromCodexEvent> = null;
+    const toolActivities = new Map<
+      string,
+      {
+        messageId: string;
+        activity: ReturnType<typeof activitiesFromCodexEvent>[number];
+      }
+    >();
+    const sendEvent = (event: object) => {
+      if (!res.destroyed && !res.writableEnded)
+        res.write(`${JSON.stringify(event)}\n`);
+    };
+    sendEvent({ type: "model", model: body.data.model || currentCodexModel() });
+    const processCodexLine = (line: string) => {
+      if (!line.trim()) return;
+      try {
+        const event = JSON.parse(line);
+        const threadId = codexThreadIdFromEvent(event);
+        if (threadId)
+          db.prepare("UPDATE sessions SET codex_thread_id=? WHERE id=?").run(
+            threadId,
+            s.id,
+          );
+        const cumulativeMetrics = metricsFromCodexEvent(
+          event,
+          Date.now() - startedAt,
+        );
+        if (cumulativeMetrics)
+          responseMetrics = metricsForCodexTurn(
+            cumulativeMetrics,
+            previousCodexMetrics,
+          );
+        const text = textFromCodexEvent(event);
+        if (text) {
+          answerTracker.append(text);
+          sendEvent({ type: "delta", text });
+        }
+        const activities = activitiesFromCodexEvent(event);
+        if (activities.some((activity) => activity.kind === "tool")) {
+          const pending = answerTracker.beforeTool();
+          if (pending) {
+            sendEvent({ type: "replace_answer", text: pending.answer });
+            const narration = {
+              kind: "narration" as const,
+              label: "Progress",
+              detail: pending.narration,
+              toolUseId: `narration-${crypto.randomUUID()}`,
+            };
+            db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
+              crypto.randomUUID(),
+              s.id,
+              "activity",
+              JSON.stringify(narration),
+              new Date().toISOString(),
+            );
+            sendEvent({ type: "activity", activity: narration });
+          }
+        }
+        for (const activity of activities) {
+          const previous = activity.toolUseId
+            ? toolActivities.get(activity.toolUseId)
+            : undefined;
+          if (activity.kind === "tool_result" && previous) {
+            const merged = {
+              ...previous.activity,
+              output: activity.detail || "",
+              isError: activity.isError,
+            };
+            db.prepare("UPDATE messages SET content=? WHERE id=?").run(
+              JSON.stringify(merged),
+              previous.messageId,
+            );
+            previous.activity = merged;
+            sendEvent({ type: "activity", activity: merged });
+            continue;
+          }
+          const messageId = crypto.randomUUID();
+          db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
+            messageId,
+            s.id,
+            "activity",
+            JSON.stringify(activity),
+            new Date().toISOString(),
+          );
+          if (activity.kind === "tool" && activity.toolUseId)
+            toolActivities.set(activity.toolUseId, { messageId, activity });
+          sendEvent({ type: "activity", activity });
+        }
+        if (event.type === "turn.failed")
+          stderr = String(
+            (event.error as { message?: string } | undefined)?.message ||
+              "Codex 执行失败",
+          );
+        if (event.type === "turn.completed") answerTracker.completeTurn();
+      } catch {}
+    };
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) processCodexLine(line);
+    });
+    child.stdout.on("end", () => processCodexLine(buffer));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("close", (code) => {
+      if (activeClaudeRuns.get(s.id) === activeRun)
+        activeClaudeRuns.delete(s.id);
+      const answer = answerTracker.answer();
+      if (answer) {
+        const completedAt = new Date().toISOString();
+        const assistantMessageId = crypto.randomUUID();
+        db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
+          assistantMessageId,
+          s.id,
+          "assistant",
+          answer,
+          completedAt,
+        );
+        if (responseMetrics) {
+          db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
+            crypto.randomUUID(),
+            s.id,
+            "metrics",
+            JSON.stringify({
+              messageId: assistantMessageId,
+              ...responseMetrics,
+            }),
+            new Date(Date.now() + 1).toISOString(),
+          );
+          sendEvent({ type: "metrics", metrics: responseMetrics });
+        }
+        db.prepare("UPDATE sessions SET updated_at=? WHERE id=?").run(
+          completedAt,
+          s.id,
+        );
+      }
+      sendEvent(
+        code === 0
+          ? { type: "done" }
+          : { type: "error", error: stderr || `Codex 退出码 ${code}` },
+      );
+      if (!res.destroyed && !res.writableEnded) res.end();
+    });
+    return;
+  }
   const claudeAuthToken = await tokenFor(uid);
   const child = runClaude({
     prompt,
@@ -1573,11 +2201,28 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   });
 });
 if (process.env.NODE_ENV === "production") {
-  app.use(express.static("dist"));
-  app.get(/.*/, (_req, res) => res.sendFile(path.resolve("dist/index.html")));
+  app.use(
+    express.static("dist", {
+      setHeaders(res, filePath) {
+        const relative = path.relative(path.resolve("dist"), filePath);
+        if (relative === "index.html")
+          res.setHeader("Cache-Control", "no-store, must-revalidate");
+        else if (/^assets[/\\].+-[a-zA-Z0-9_-]{8,}\.[^.]+$/.test(relative))
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        else if (relative.startsWith(`mathjax${path.sep}`))
+          res.setHeader("Cache-Control", "public, max-age=2592000");
+      },
+    }),
+  );
+  app.get(/.*/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
+    return res.sendFile(path.resolve("dist/index.html"));
+  });
 }
 const serverPort = Number(process.env.PORT || 3001);
-app.listen(serverPort, () => {
-  startTaskScheduler(serverPort);
-  console.log(`${appName}: http://localhost:${serverPort}`);
+const serverHost = process.env.HOST || "127.0.0.1";
+app.listen(serverPort, serverHost, () => {
+  if (process.env.DISABLE_TASK_SCHEDULER !== "1")
+    startTaskScheduler(serverPort);
+  console.log(`${appName}: http://${serverHost}:${serverPort}`);
 });

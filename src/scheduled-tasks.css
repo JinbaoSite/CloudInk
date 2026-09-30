@@ -637,6 +637,9 @@
 .schedule-form-row.three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.schedule-form-row.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
 .schedule-form .schedule-enabled {
   align-items: center;
   justify-content: flex-start;
@@ -721,7 +724,8 @@
     display: none;
   }
   .schedule-form-row,
-  .schedule-form-row.three {
+  .schedule-form-row.three,
+  .schedule-form-row.four {
     grid-template-columns: 1fr;
   }
   .schedule-page-header {

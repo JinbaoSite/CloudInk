@@ -10,6 +10,7 @@ type ScheduledTask = {
   prompt: string;
   cron_expression: string;
   timezone: string;
+  backend: "claude" | "codex";
   model: string | null;
   permission_mode: "auto" | "plan" | "manual" | "acceptEdits";
   overlap_policy: "skip" | "queue";
@@ -141,8 +142,8 @@ function createSessionForRun(task: ScheduledTask, scheduledFor: string) {
     hour12: false,
   }).format(new Date(scheduledFor));
   db.prepare(
-    `INSERT INTO sessions(id,user_id,title,claude_session_id,created_at,updated_at,favorite)
-     VALUES(?,?,?,?,?,?,0)`,
+    `INSERT INTO sessions(id,user_id,title,claude_session_id,created_at,updated_at,favorite,backend)
+     VALUES(?,?,?,?,?,?,0,?)`,
   ).run(
     sessionId,
     task.user_id,
@@ -150,6 +151,7 @@ function createSessionForRun(task: ScheduledTask, scheduledFor: string) {
     crypto.randomUUID(),
     now,
     now,
+    task.backend,
   );
   return sessionId;
 }
@@ -277,6 +279,7 @@ async function executeRun(
           content: task.prompt,
           attachments: [],
           mode: task.permission_mode,
+          backend: task.backend,
           model: task.model || undefined,
         }),
       },

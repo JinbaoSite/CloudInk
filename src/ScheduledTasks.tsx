@@ -1,13 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { ChevronRight, CircleX, Clock3, Menu, Plus, X } from "lucide-react";
+
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type ModelOption = { value: string; description: string };
+type BackendId = "claude" | "codex";
+type BackendOption = {
+  value: BackendId;
+  label: string;
+  available: boolean;
+  model: string;
+  models: ModelOption[];
+};
 type ScheduledTask = {
   id: string;
   name: string;
   prompt: string;
   cron_expression: string;
   timezone: string;
+  backend: BackendId;
   model: string | null;
   permission_mode: "auto" | "plan" | "manual" | "acceptEdits";
   overlap_policy: "skip" | "queue";
@@ -49,13 +61,14 @@ type TaskDraft = {
   weekday: number;
   cronExpression: string;
   timezone: string;
+  backend: BackendId;
   model: string;
   mode: ScheduledTask["permission_mode"];
   overlapPolicy: ScheduledTask["overlap_policy"];
   enabled: boolean;
 };
 
-const emptyDraft = (model: string): TaskDraft => ({
+const emptyDraft = (backend: BackendId, model: string): TaskDraft => ({
   name: "",
   prompt: "",
   scheduleKind: "daily",
@@ -64,6 +77,7 @@ const emptyDraft = (model: string): TaskDraft => ({
   weekday: 1,
   cronExpression: "0 9 * * *",
   timezone: "Asia/Shanghai",
+  backend,
   model,
   mode: "auto",
   overlapPolicy: "skip",
@@ -71,7 +85,7 @@ const emptyDraft = (model: string): TaskDraft => ({
 });
 
 async function taskApi(path: string, init?: RequestInit) {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`${BASE_PATH}/api${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
@@ -153,13 +167,15 @@ function scheduleCopy(task: ScheduledTask) {
 }
 
 export default function ScheduledTasks({
-  modelOptions,
+  backendOptions,
+  currentBackend,
   currentModel,
   sidebarContainer,
   onOpenRun,
   onOpenSidebar,
 }: {
-  modelOptions: ModelOption[];
+  backendOptions: BackendOption[];
+  currentBackend: BackendId;
   currentModel: string;
   sidebarContainer: HTMLElement | null;
   onOpenRun: (sessionId: string, title: string) => void;
@@ -171,7 +187,9 @@ export default function ScheduledTasks({
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState("");
-  const [draft, setDraft] = useState(() => emptyDraft(currentModel));
+  const [draft, setDraft] = useState(() =>
+    emptyDraft(currentBackend, currentModel),
+  );
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ScheduledTask | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -224,7 +242,7 @@ export default function ScheduledTasks({
 
   const openCreate = () => {
     setEditingId("");
-    setDraft(emptyDraft(currentModel));
+    setDraft(emptyDraft(currentBackend, currentModel));
     setNotice("");
     setFormOpen(true);
   };
@@ -239,7 +257,11 @@ export default function ScheduledTasks({
       weekday: 1,
       cronExpression: task.cron_expression,
       timezone: task.timezone,
-      model: task.model || currentModel,
+      backend: task.backend || "claude",
+      model:
+        task.model ||
+        backendOptions.find((option) => option.value === task.backend)?.model ||
+        currentModel,
       mode: task.permission_mode,
       overlapPolicy: task.overlap_policy,
       enabled: Boolean(task.enabled),
@@ -257,6 +279,7 @@ export default function ScheduledTasks({
         prompt: draft.prompt,
         cronExpression: cronFromDraft(draft),
         timezone: draft.timezone,
+        backend: draft.backend,
         model: draft.model || null,
         mode: draft.mode,
         overlapPolicy: draft.overlapPolicy,
@@ -288,6 +311,7 @@ export default function ScheduledTasks({
         prompt: task.prompt,
         cronExpression: task.cron_expression,
         timezone: task.timezone,
+        backend: task.backend,
         model: task.model,
         mode: task.permission_mode,
         overlapPolicy: task.overlap_policy,
@@ -305,7 +329,7 @@ export default function ScheduledTasks({
           <small>{tasks.length} 个任务</small>
         </div>
         <button type="button" onClick={openCreate}>
-          <span aria-hidden="true">+</span>
+          <Plus aria-hidden="true" />
           新建
         </button>
       </div>
@@ -337,10 +361,10 @@ export default function ScheduledTasks({
         ) : (
           <div className="schedule-empty">
             <span className="schedule-empty-clock" aria-hidden="true">
-              ◷
+              <Clock3 />
             </span>
             <b>还没有定时任务</b>
-            <span>创建后，Claude 会按周期在后台执行。</span>
+            <span>创建后，CloudInk 会按周期在后台执行。</span>
             <button type="button" onClick={openCreate}>
               创建第一个任务
             </button>
@@ -360,11 +384,11 @@ export default function ScheduledTasks({
           aria-label="打开侧边栏"
           onClick={onOpenSidebar}
         >
-          ☰
+          <Menu aria-hidden="true" />
         </button>
         <div>
           <h1>定时任务</h1>
-          <p>按计划让 Claude 在后台执行工作</p>
+          <p>按计划让 CloudInk 在后台执行工作</p>
         </div>
       </header>
       <div className="schedule-page-body">
@@ -429,7 +453,13 @@ export default function ScheduledTasks({
                 </div>
                 <div>
                   <span>模型</span>
-                  <b>{selectedTask.model || "CLI 默认"}</b>
+                  <b>
+                    {backendOptions.find(
+                      (option) => option.value === selectedTask.backend,
+                    )?.label || selectedTask.backend}
+                    {" · "}
+                    {selectedTask.model || "CLI 默认"}
+                  </b>
                 </div>
                 <div>
                   <span>执行模式</span>
@@ -481,7 +511,7 @@ export default function ScheduledTasks({
                         <small>
                           {run.error ||
                             (run.status === "running"
-                              ? "Claude 正在后台执行…"
+                              ? "CloudInk 正在后台执行…"
                               : statusCopy[run.status])}
                         </small>
                       </span>
@@ -497,7 +527,9 @@ export default function ScheduledTasks({
                         <b>{formatTokens(run)}</b>
                       </span>
                       {run.session_id && (
-                        <span className="schedule-run-arrow">›</span>
+                        <span className="schedule-run-arrow">
+                          <ChevronRight aria-hidden="true" />
+                        </span>
                       )}
                     </button>
                   ))
@@ -515,7 +547,9 @@ export default function ScheduledTasks({
             </>
           ) : !loading ? (
             <div className="schedule-detail-empty">
-              <span>◷</span>
+              <span>
+                <Clock3 aria-hidden="true" />
+              </span>
               <b>选择或创建一个定时任务</b>
               <p>任务的执行内容会保存在聊天对话中。</p>
             </div>
@@ -533,14 +567,14 @@ export default function ScheduledTasks({
             <header>
               <div>
                 <h2>{editingId ? "编辑定时任务" : "新建定时任务"}</h2>
-                <p>配置 Claude 自动执行的内容和周期</p>
+                <p>配置 CloudInk 自动执行的内容和周期</p>
               </div>
               <button
                 type="button"
                 aria-label="关闭"
                 onClick={() => setFormOpen(false)}
               >
-                ×
+                <X aria-hidden="true" />
               </button>
             </header>
             <label>
@@ -564,7 +598,7 @@ export default function ScheduledTasks({
                 onChange={(event) =>
                   setDraft({ ...draft, prompt: event.target.value })
                 }
-                placeholder="描述希望 Claude 周期性完成的工作…"
+                placeholder="描述希望 CloudInk 周期性完成的工作…"
               />
             </label>
             <div className="schedule-form-row">
@@ -663,7 +697,7 @@ export default function ScheduledTasks({
                 </small>
               </label>
             )}
-            <div className="schedule-form-row three">
+            <div className="schedule-form-row four">
               <label>
                 <span>时区</span>
                 <input
@@ -674,6 +708,33 @@ export default function ScheduledTasks({
                 />
               </label>
               <label>
+                <span>后端</span>
+                <select
+                  value={draft.backend}
+                  onChange={(event) => {
+                    const backend = event.target.value as BackendId;
+                    const option = backendOptions.find(
+                      (item) => item.value === backend,
+                    );
+                    setDraft({
+                      ...draft,
+                      backend,
+                      model: option?.model || "CLI default",
+                    });
+                  }}
+                >
+                  {backendOptions.map((backend) => (
+                    <option
+                      key={backend.value}
+                      value={backend.value}
+                      disabled={!backend.available}
+                    >
+                      {backend.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 <span>模型</span>
                 <select
                   value={draft.model}
@@ -681,7 +742,11 @@ export default function ScheduledTasks({
                     setDraft({ ...draft, model: event.target.value })
                   }
                 >
-                  {modelOptions.map((model) => (
+                  {(
+                    backendOptions.find(
+                      (backend) => backend.value === draft.backend,
+                    )?.models || []
+                  ).map((model) => (
                     <option key={model.value} value={model.value}>
                       {model.value}
                     </option>
@@ -766,7 +831,7 @@ export default function ScheduledTasks({
             aria-describedby="schedule-delete-description"
           >
             <div className="schedule-confirm-icon" aria-hidden="true">
-              ×
+              <CircleX aria-hidden="true" />
             </div>
             <div className="schedule-confirm-copy">
               <h2 id="schedule-delete-title">删除定时任务？</h2>
@@ -812,7 +877,7 @@ export default function ScheduledTasks({
         <div className="schedule-toast" role="status">
           {notice}
           <button type="button" onClick={() => setNotice("")}>
-            ×
+            <X aria-hidden="true" />
           </button>
         </div>
       )}
