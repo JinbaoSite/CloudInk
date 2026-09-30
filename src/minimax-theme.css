@@ -947,7 +947,7 @@ aside {
 }
 
 .project-session-list {
-  padding-left: 34px;
+  padding-left: 26px;
 }
 
 .project-session-list .session,
@@ -957,7 +957,7 @@ aside {
 }
 
 .project-session-list .session {
-  padding: 4px 0;
+  padding: 4px 8px;
 }
 
 .recent-session-list .session {
