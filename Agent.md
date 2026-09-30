@@ -4,15 +4,19 @@
 
 ## 核心目标
 
-- 提供接近 Claude Code CLI 和 VS Code 插件的聊天体验。
-- 每个用户只能访问自己的会话、消息、附件和工作区。
-- 保留 Claude 的流式文本与 Thinking、Read、Bash 等执行过程。
+- 提供统一的 Claude Code CLI、Codex CLI 和 VS Code 式工作区体验。
+- 每个用户只能访问自己的项目、定时任务、会话、消息、附件和工作区。
+- 保留 Agent 的流式文本与 Thinking、WebSearch、Read、Bash 等执行过程及真实先后顺序。
 - 桌面端和手机端都必须可用。
 
 ## 代码地图
 
 - `src/main.tsx`：认证、会话状态、附件、NDJSON 流读取、自动滚动、执行模式及主要 UI。
 - `src/MarkdownMessage.tsx`：Markdown、GFM、延迟数学公式渲染和消息级错误边界。
+- `src/workspace-links.ts`：聊天内容中的工作区文件链接识别与安全归一化。
+- `src/message-order.ts`：历史 activity 的同批次顺序兼容处理。
+- `src/ScheduledTasks.tsx`：定时任务列表、编辑、执行记录与删除确认 UI。
+- `src/WorkspaceEditor.tsx`：多标签文件编辑、Markdown/HTML 预览和保存状态。
 - `src/styles.css`：应用框架、侧栏、顶部导航和 `700px` 移动端断点。
 - `src/chat-layout.css`：滚动区域和用户/助手消息布局。
 - `src/composer.css`：固定输入区、附件、Commands、Skills 和 Mode 面板。
@@ -22,7 +26,10 @@
 - `server/db.ts`：SQLite schema、兼容迁移和用户工作区。
 - `server/claude.ts`：Claude CLI 参数、模型与指标、assistant 轮次及 `stream-json` 事件解析。
 - `server/claude.test.ts`：Claude 事件解析和工具轮/最终轮分类测试。
-- `server/ui-mcp.mjs`：把 Claude 的结构化提问桥接到 Web UI。
+- `server/codex.ts`：Codex CLI 参数、线程恢复、模型、逐轮指标与 JSONL 事件解析。
+- `server/scheduler.ts`：Cron 解析、任务入队、并发限制和执行记录。
+- `server/slash.ts`：按 Claude/Codex 后端发现 Commands、Skills 和 description。
+- `server/ui-mcp.mjs`：把 Claude 的结构化提问及定时任务工具桥接到 Web UI。
 - `vite.config.ts`：读取 `WEB_PORT` 和 `PORT`，配置 Web UI 端口及 API 代理。
 
 ## 必须保持的约束
@@ -31,9 +38,10 @@
 
 - 所有 session 查询、读取和删除必须同时匹配 `session.id` 与当前 `user_id`。
 - `root` 是由 `ROOT_EMAIL` / `ROOT_PASSWORD` 启动配置首次创建的保留用户名，禁止公开注册。已有 Root 的密码不得在服务重启时被环境变量覆盖，必须允许通过账户菜单持久修改。Root 可读取全部 session 与以用户名为一级目录的全部工作区；普通用户仍必须严格隔离。Root 查看其他用户 session 时前端必须保持只读，后端消息写入、收藏和删除仍只允许 session 所有者。
-- 工作区必须使用 `<WORKSPACE_DIR>/<username>`；未配置时使用 `<DATA_DIR>/workspaces/<username>`，不能回退到所有用户共享的同一个目录。
+- 用户根工作区必须使用 `<WORKSPACE_DIR>/<username>`；未配置时使用 `<DATA_DIR>/workspaces/<username>`，不能回退到所有用户共享的同一个目录。项目只能绑定该用户根工作区内的目录，所有项目 API 必须同时校验 `project.id + 当前 user_id`。
 - 附件路径必须解析到当前用户工作区内，并防止目录穿越。
-- 不得将其他用户的邮箱、用户名、会话标题或文件路径返回给当前用户。
+- 定时任务及执行记录的读取、修改、立即运行和删除必须校验任务所有者；由执行记录创建的会话继续遵守普通会话鉴权。
+- 不得将其他用户的邮箱、用户名、项目、任务、会话标题或文件路径返回给当前用户。
 
 ### 会话保存
 
@@ -43,7 +51,7 @@
 - 空白会话不得出现在历史记录中。
 - 每个已保存会话使用 `/sessions/:sessionId` 地址。首次发送、历史切换、刷新、前进/后退、删除当前会话和新对话操作都必须同步 URL 与 `active` 状态。
 - 历史会话标题应使用真实 `<a href>`，同时由 History API 做无刷新切换；直接访问无权或不存在的会话时回到 `/` 并显示错误，不能泄露其他用户信息。
-- CLI 首轮使用新的 `--session-id`，后续使用 `--resume`。
+- 会话必须持久化 `backend`。Claude 首轮使用新的 `--session-id`、后续使用 `--resume`；Codex 保存 `codex_thread_id` 并在后续轮次恢复同一 thread。已有会话不能因输入框切换后端而悄悄改变后端。
 - 对断裂会话发送“继续”等短指令时，必须从数据库补充原始问题和最近有效助手回答，忽略 `No response requested.`，使用新的无工具 CLI session，并将新 session ID 写回 Web 会话。
 
 ### 聊天与流式输出
@@ -59,11 +67,13 @@
 - Thinking 内容使用与助手正文一致的 Markdown 渲染能力；Read 应直接显示文件路径，Bash 应优先显示 description，工具详情保持折叠的 `IN` / `OUT` 结构。
 - `thinking_delta` 必须实时合并到同一条 Thinking activity 并持续更新，而不是等完整 assistant 事件后才显示或为每个 delta 新建消息。
 - Claude 在工具调用前输出的普通 text narration 和子 Agent 文本必须使用独立 `narration` activity，像助手过程文字一样直接打印；不得归类为 Thinking，也不得拼入最终正文。Thinking、Read、Bash 等活动卡片继续默认折叠。
-- narration 的实时事件和历史消息都必须重排到其对应的连续工具卡片之前，保持“过程说明 → 工具调用”的语义顺序。
+- narration 只能在同一事件批次内移动到对应工具之前，不能跨过更早批次的 WebSearch 或其他工具。Codex 的“说明 → 工具 → 说明 → 工具”必须保持数据库 rowid 的真实时间顺序；修改时覆盖 `message-order.test.ts`。
 - 带 `parent_tool_use_id` 的子 Agent `text_delta` 不能拼入最终助手正文；子 Agent 的完整 text block 必须作为可渲染 Markdown 的 Agent activity 展示和持久化。
 - `question` 事件必须在输入框上方呈现 Submit answer 面板；提交答案后要继续同一个 Web 会话。
 - 助手正文末尾保留复制、重试、耗时和 Token 统计控件；重试应复用对应的用户问题，而不是复制助手答案。
+- Token 统计必须是当前回复的逐轮消耗，不能直接展示 Codex resumed thread 的累计 usage；累计值只可作为下一轮差分基线。
 - 回答期间发送按钮必须切换为中止按钮；中止应关闭浏览器流和 Claude 子进程、保留部分输出且不显示为错误。
+- 浏览器刷新或断开流不得中止后台 CLI。页面重新进入会话后必须通过 `/api/sessions/:id/run` 恢复 Working、停止按钮和增量消息轮询。部署前必须检查活动任务；不得为了纯前端静态资源更新重启服务并中断长任务。
 - 新消息发送后必须定位到最新内容；流式 `delta` 和 `activity` 到达时持续跟随底部。
 - 用户主动上滚时应暂停自动跟随，回到底部附近后恢复。
 - `.messages` 只允许纵向滚动；长链接、代码、表格、图片和工具内容必须在自身边界内换行或局部滚动，不得让整个对话区域出现横向滚动条。
@@ -71,7 +81,7 @@
 - Markdown 围栏代码块使用 `rehype-highlight` 高亮：优先采用代码围栏声明的语言，未声明时自动检测，未知语言安全回退为普通代码；行内代码不得套用块级高亮样式。
 - Markdown 渲染必须有消息级错误边界，单条内容异常时回退为纯文本，不能让应用根节点白屏。
 
-### Claude 权限模式
+### 后端、权限模式与模型
 
 前后端允许值必须保持一致：
 
@@ -80,36 +90,60 @@
 - `manual`
 - `acceptEdits`
 
-修改 Mode 时同步检查 UI 文案、图标、Zod schema 和传给 Claude CLI 的 `--permission-mode`。
+修改 Mode 时同步检查 UI 文案、图标、Zod schema，以及 Claude/Codex 两个运行器的映射。
+
+- 后端值只允许 `claude` 或 `codex`，会话、定时任务、请求 schema 和 UI 类型必须一致。
+- 模型菜单使用 Claude Code / Codex Tab 分组；选中 Tab 与弹窗背景融为一体，不使用额外底框。
+- Claude 模型来自服务端配置和 CLI 初始化事件；Codex 模型来自 `CODEX_MODEL`、`$CODEX_HOME/config.toml` 和 `models_cache.json`，不得在前端伪造固定模型清单。
+- `/` 菜单必须按当前后端扫描：Claude 从 init capabilities 获取，Codex 从用户及项目的 commands/skills 目录发现。
 
 ### 模型探测
 
 - 未配置 `CLAUDE_MODEL` 时，服务启动只执行一次轻量探测并缓存 `system/init.model`。
 - 探测必须禁用工具和会话持久化，并设置超时与 `CLI default` 回退。
 - 正式聊天返回 `model` 事件时，前端仍应更新显示，以反映 fallback 或运行时模型变化。
+- Codex 可用性探测必须异步、只缓存一次且设置超时，禁止用同步子进程阻塞 `/api/config` 或其他请求。
 
 ### 响应式布局
 
 - `index.html` 必须保留 `width=device-width` 的 viewport 声明。
-- 桌面端显示固定历史会话侧栏。
+- 桌面端左侧为 56px 图标 Tab 轨道和内容侧栏；Tab 只展示图标，包含首页、定时任务、文件，用户入口固定在轨道底部。
+- 首页按“新对话、项目、最近”组织；定时任务 Tab 只展示任务，文件 Tab 只展示用户根工作区文件，不随当前项目切换。
 - `max-width: 700px` 时侧栏变为默认关闭的抽屉。
-- 手机端左上角汉堡按钮打开历史会话，右上角 `+` 新建本地空白会话。
+- 手机端左上角汉堡按钮打开侧栏，右上角 `+` 新建本地空白会话。
 - 抽屉通过遮罩、关闭按钮、会话选择和新建动作关闭。
 - 输入框应考虑 `env(safe-area-inset-bottom)`。
 - 桌面侧栏宽度可拖拽调整，并应设置合理的最小、最大宽度；历史会话过多时只能在侧栏内部滚动，不能挤压或破坏聊天布局。
 - 桌面侧栏使用 Font Awesome 面板图标收起和展开，并持久化用户偏好；收起后必须保留可访问的展开按钮，且不能影响手机端抽屉。手机端打开和关闭也必须使用图标，不能回退为字符符号。
 - 右侧 `.messages` 滚动条保持细且低对比度，只增强悬停状态；不要让其样式覆盖左侧历史会话和文件目录滚动条。
 
+### 项目与历史会话
+
+- 普通“新对话”属于用户根工作区且 `project_id=NULL`；只有项目内新建或显式“移至项目”的会话才属于项目，禁止自动把旧会话归入默认项目。
+- 项目名称和目录在创建/编辑弹窗中维护；默认建议路径为 `/<username>/<project-name>`，后端必须解析到用户工作区内部。编辑时必须回显当前目录，删除项目仅删除项目记录并把会话移回最近，不删除目录文件。
+- 项目行使用文件夹打开/关闭图标控制会话展开；项目列表整体也可收缩。项目名称、项目会话标题应保持对齐和紧凑间距。
+- 项目及最近会话都支持整行单击切换；标题继续使用真实链接。`…` 菜单点击必须阻止冒泡，提供重命名、收藏、移至项目、删除；移至项目子菜单在右侧展开，不能被滚动容器裁切。
+- 选中会话与 hover 使用相同背景且没有左侧色条；背景边缘和标题首字之间保留内边距。窄侧栏时可以只保留图标，文字不得折成两行。
+
+### 定时任务
+
+- `scheduled_tasks` 必须持久化 backend、model、五段 Cron、IANA timezone、permission mode、overlap policy、enabled 和 next run；旧数据迁移必须幂等。
+- 调度执行必须把任务保存的 backend 和 model 原样传给消息接口，并用相同 backend 创建会话；禁止把 Codex 模型交给 Claude 后端。
+- 每次执行写入 `scheduled_task_runs` 并关联独立会话，状态至少覆盖 queued、running、completed、failed、skipped。执行内容通过普通聊天消息/activity 展示。
+- overlap=`skip` 时上一轮未完成应记录跳过；queue 模式可以排队。全局并发受 `SCHEDULED_TASK_CONCURRENCY` 限制。
+- 页面和 Claude MCP 工具操作的是同一套任务数据。删除确认使用 CloudInk 自有模态框，不使用浏览器 confirm，并明确会删除任务、执行记录和关联定时会话。
+
 ### 工作区文件交互
 
-- 左侧文件目录和输入框 `@` 菜单必须只读取 `/api/workspace/files` 返回的当前用户工作区文件。
+- 左侧文件目录和输入框 `@` 菜单必须只读取 `/api/workspace/files` 返回的当前用户根工作区文件；文件 Tab 不按项目过滤。项目会话执行 cwd 仍使用项目目录。
 - `@` 和 `/` 选择完成后，应在输入内容中高亮对应 token，并把光标恢复到插入内容之后。
-- `/` 菜单数据必须来自 `/api/slash-items` 动态发现。后端以当前用户工作区启动轻量 Claude CLI，读取 `system/init` 的 `slash_commands` 和 `skills`；不得再次把完整清单硬编码到前端。
+- `/` 菜单数据必须来自 `/api/slash-items` 动态发现。Claude 后端读取 `system/init`，Codex 后端扫描对应配置目录；不得把完整清单硬编码到前端。
 - Commands/Skills 的 description 优先读取项目、用户和插件定义中的 YAML front matter 或 TOML 字段；工作区定义优先级最高。CLI 内置项使用对应的内置说明，不得返回“自动发现的 Skill/Command”等统一占位文案。
 - 动态发现应在收到 `system/init` 后立即终止探测进程，并使用短时、按工作区隔离的缓存，避免为了刷新菜单完成一次模型回答或跨用户复用项目级 Skills。
 - 文件与目录使用单色 Font Awesome 图标；同一种文件在侧栏和 `@` 菜单中应保持图标与对齐方式一致。
 - `+` 上传的附件仍必须经过服务端路径校验，不能因为文件已在工作区列表中就绕过安全检查。
 - 点击侧栏文件后在中间 Workspace 打开；多个文件使用标签页切换，编辑内容在切换时不能丢失，`Ctrl/Cmd+S` 和保存按钮必须写回当前用户工作区。
+- 助手 Markdown 中的相对文件路径和 CloudInk 工作区绝对路径必须可点击并在 Workspace 打开；外部 URI scheme 保持普通链接。链接识别不能依赖文件列表已经加载完成，最终路径仍必须由后端工作区校验。
 - Workspace 编辑器使用 CodeMirror；语言解析器必须按当前文件类型动态加载，支持常见前端、Python、Markdown、JSON、SQL 和 YAML 高亮，未知文本安全回退为无语法模式，不能把全部语言包加入聊天首屏。
 - Workspace 中的 Markdown 文件默认进入预览模式，并可切换到 CodeMirror 源码编辑；预览复用统一 Markdown 渲染器，必须保留 GFM、代码高亮与 MathJax 支持。
 - Workspace 中的 HTML 文件默认使用 sandbox iframe 预览并可切换源码编辑；未保存内容通过 `srcDoc` 实时预览，相对资源必须经当前用户鉴权的工作区预览路由加载，且不得允许 iframe 继承 Web UI 同源权限。
@@ -120,8 +154,8 @@
 - 文件与文件夹的 Rename、New File 和 New Folder 必须在文件树内显示可编辑命名行，并提供可见的保存/取消按钮；`Enter` 确认、`Esc` 取消。名称操作不得依赖失焦自动提交，也不得在请求完成前清除编辑状态；失败时必须在命名行下方展示原因并保留输入内容。右击文件夹创建时，输入行必须渲染在该目录节点内，后端目标路径必须是该目录的直接子项。
 - Rename 必须使用独立于 New File/New Folder 的 saving/error 状态，并通过 `POST /api/workspace/rename` 单次提交 `{ path, name, kind }`；不得用自动重试掩盖网络错误或与创建操作共享命名状态。
 - 文件夹 Delete 会递归删除其全部内容；后端必须先校验目标属于当前用户工作区且不是符号链接，前端必须关闭该目录下的编辑器标签并清理指向该目录的剪贴板状态。
-- 桌面端打开 Workspace 时，未保存过自定义宽度的 Sidebar、Workspace、Chat 必须按 `15% / 60% / 25%` 初始化；拖拽宽度继续持久化，双击分隔线恢复对应默认比例。侧栏用户信息使用用户名首字符图标和用户名，不显示 `@username`。
-- 桌面端 Sidebar 收起后必须保留 56px 图标轨道，轨道内提供展开、新对话、对话、文件及用户首字符入口；不得把桌面端展开按钮放入 Chat header。移动端继续使用完整侧栏抽屉，不应用图标轨道布局。
+- 桌面端打开 Workspace 时，未保存过自定义宽度的 Sidebar、Workspace、Chat 必须按 `25% / 45% / 30%` 初始化；拖拽宽度继续持久化，双击分隔线恢复对应默认比例。侧栏用户信息在图标轨道底部只显示用户名首字符图标。
+- 桌面端 Sidebar 收起后必须保留 56px 图标轨道，轨道内提供展开、首页、定时任务、文件及用户入口；不得把桌面端展开按钮放入 Chat header。移动端继续使用完整侧栏抽屉，不应用图标轨道布局。
 - 产品品牌名通过 `.env` 的 `APP_NAME` 配置，默认值为 `CloudInk`；登录页、侧边栏和浏览器标题必须统一使用 `/api/public-config` 返回的品牌名，不得在前端写死。
 - Commands/Skills 菜单不得包含前端硬编码默认项，也不得复用后端缓存列表；每次打开菜单必须先清空旧项并展示扫描状态，只渲染当次 `/api/slash-items` 动态扫描返回的内容。
 - `/` Commands/Skills 与 `@` 文件菜单必须支持键盘上下循环选择、Enter 确认和 Esc 关闭；键盘高亮与鼠标 hover 使用同一索引，并自动滚动到可见区域，不能让 Enter 在菜单有候选项时提交消息。
@@ -166,11 +200,13 @@ npm test
 - 用户 A 是否无法访问用户 B 的会话 URL。
 - 点击“新对话”后历史列表是否没有新增空记录。
 - 切换会话后 URL 是否更新，刷新和浏览器前进/后退是否恢复对应会话。
+- 刷新正在运行的会话后 Working、停止按钮和新增 activity 是否恢复，浏览器断开是否不会终止后台任务。
 - 首次发送内容后会话是否出现并正确生成标题。
+- Claude Code / Codex Tab、真实模型列表和会话后端锁定是否正确；两个后端的 `/` Commands/Skills 是否分别可用。
 - 用户/助手消息是否保持左右布局。
 - Markdown、代码块、表格和数学公式是否正常。
 - 数学公式密集的流式回答是否保持页面稳定，并在结束后完成排版。
-- Thinking、Read、Bash 和执行结果是否按顺序展示。
+- Thinking、WebSearch、Read、Bash 和执行结果是否按真实顺序展示，多组 WebSearch 是否没有被错误集中到最终回复之后。
 - 工具调用前的普通文本是否被转入 Thinking，且最终正文不会包含 “Let me fix…” 等过程叙述。
 - Thinking 中的 Markdown、工具卡片的描述与 `IN` / `OUT` 是否正常渲染。
 - Claude 发起结构化提问时，Submit answer 是否弹出并能成功继续会话。
@@ -181,11 +217,15 @@ npm test
 - Commands、Skills、Mode 面板是否位于输入框上方且不遮挡输入。
 - 输入 `/`、`@` 的菜单选择、点击外部关闭及选择后的光标位置是否正确。
 - 历史会话过多时侧栏是否独立滚动，拖拽调整宽度是否不会破坏聊天区域。
+- 项目列表能否收缩，项目会话能否整行单击切换；项目与最近会话的重命名、收藏、移至项目和删除是否正常且菜单不被裁切。
+- 根目录新对话和项目新对话是否使用正确 cwd，普通历史会话是否保持 `project_id=NULL`。
+- 定时任务创建、编辑、立即运行、暂停、删除和执行记录是否正常，Claude/Codex 后端及模型是否传递到实际执行会话。
 - 普通 Enter 是否发送，`Ctrl+Enter` / `Shift+Enter` 是否换行；侧栏收起后是否可以重新展开。
 - 附件是否只能来自当前用户工作区。
 - 点击、拖拽文件/图片和粘贴截图是否都能上传，拖拽遮罩是否正确出现和消失。
 - 手机端汉堡菜单、抽屉遮罩、右上角新建和底部输入框是否正常。
 - 点击文件是否展开 Workspace，多标签切换是否保留修改，保存、未保存关闭确认和 `Ctrl/Cmd+S` 是否正常；关闭最后一个文件后对话区是否恢复完整宽度。
+- 助手回复中的相对/绝对工作区文件链接是否能直接打开 Workspace，文件列表尚未完成加载时也要验证；外部链接不得被拦截。
 - 不同文件类型是否显示行号和正确语法高亮，切换标签时语言模式是否同步变化，未知文本是否仍可编辑。
 - Workspace/Chat 分隔条是否可拖拽且刷新后保留；文件与空白区域右键菜单、剪切复制粘贴、新建、下载和文件区拖拽上传是否正常。
 
@@ -196,6 +236,7 @@ npm test
 - 环境变量、启动命令或端口
 - API 路径或 NDJSON 事件格式
 - 数据库 schema 或工作区路径
-- Claude CLI 参数、工具权限或执行模式
+- Claude/Codex CLI 参数、模型发现、工具权限或执行模式
+- 项目目录、会话归属或定时任务行为
 - 上传限制、认证方式或安全模型
 - 桌面/手机端核心交互

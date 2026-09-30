@@ -5,26 +5,27 @@
 </p>
 
 <p align="center">
-  面向团队和个人的多用户 Claude Code Web 客户端<br />
-  在浏览器中获得接近 Claude Code CLI 与 VS Code 插件的完整 Agent 体验
+  面向团队和个人的多用户 AI Agent Web 工作空间<br />
+  在浏览器中统一使用 Claude Code、Codex、项目、定时任务与文件编辑器
 </p>
 
 <p align="center">
   <img alt="Node.js 20+" src="https://img.shields.io/badge/Node.js-20%2B-43853d?style=flat-square" />
   <img alt="React" src="https://img.shields.io/badge/React-TypeScript-3178c6?style=flat-square" />
-  <img alt="Claude Code CLI" src="https://img.shields.io/badge/Runtime-Claude_Code_CLI-c15f3c?style=flat-square" />
+  <img alt="Claude Code and Codex CLI" src="https://img.shields.io/badge/Runtime-Claude_Code_%2B_Codex_CLI-c15f3c?style=flat-square" />
   <img alt="Multi-user" src="https://img.shields.io/badge/Mode-Multi--user-5f5a52?style=flat-square" />
 </p>
 
 ![CloudInk 桌面端界面](docs/images/desktop-ui.png)
 
-CloudInk 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用户 AI 工作空间。它不仅展示最终回复，还会实时呈现 Thinking、Read、Bash、Agent、Skill 等执行过程，并为每位用户隔离会话、消息和工作区。
+CloudInk 是一个基于 React、Express、SQLite、Claude Code CLI 和 Codex CLI 的多用户 AI 工作空间。它不仅展示最终回复，还会按真实执行顺序呈现 Thinking、WebSearch、Read、Bash、Agent、Skill 等过程，并为每位用户隔离会话、消息、项目和工作区。
 
 ## 为什么选择它
 
-- **真实 Claude Code 体验**：直接驱动本机 Claude Code CLI，支持会话续接、工具调用和执行模式。
+- **双 Agent 后端**：直接驱动本机 Claude Code CLI 或 Codex CLI，可在输入框底部切换后端和真实模型。
 - **完整执行过程**：分开展示 Thinking、工具描述、输入与输出，最终正文不会混入工具轮的过程叙述。
 - **多用户隔离**：用户拥有独立的登录身份、聊天记录、CLI session 和工作区目录。
+- **项目与自动化**：项目拥有独立目录和会话集合；定时任务可以选择后端、模型、Cron、时区和重叠策略，并保留每次执行记录。
 - **面向实际使用**：支持流式输出、中止、重试、附件、文件引用、Markdown、MathJax 和响应式布局。
 - **可刷新、可分享的会话地址**：每个会话拥有独立 URL，刷新或浏览器前进/后退不会丢失当前位置。
 
@@ -32,9 +33,11 @@ CloudInk 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用�
 
 | 能力                  | 说明                                                                                                        |
 | --------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 多用户 Agent 对话     | 独立账号、会话、Claude CLI session 与工作区；流式展示 Thinking、Agent 和完整工具调用过程。                  |
-| 专业聊天输入区        | 支持执行模式、动态 Commands/Skills、`@` 文件引用、500MB 附件、拖拽上传、截图粘贴和多行输入。                |
+| 多后端 Agent 对话     | 支持 Claude Code 与 Codex；按后端展示真实模型、Commands/Skills、Thinking、Agent 和完整工具调用过程。        |
+| 专业聊天输入区        | 支持后端/模型、执行模式、动态 Commands/Skills、`@` 文件引用、500MB 附件、拖拽上传、截图粘贴和多行输入。     |
 | 可恢复会话            | 每个会话拥有独立 URL，支持刷新恢复、收藏置顶、删除、中止、继续、复制和重试。                                |
+| 项目管理              | 新建、编辑、置顶和删除项目；每个项目绑定独立目录，并可创建、展开和移动项目会话。                            |
+| 定时任务              | 支持 Cron、时区、Claude/Codex、模型、执行模式和并发策略；每次运行生成可查看的独立聊天会话。                 |
 | VS Code 式 Workspace  | 侧边栏、文件树、多标签编辑器与 Chat 三栏协作；支持代码高亮、保存状态和可拖拽宽度。                          |
 | Markdown 与 HTML 预览 | Markdown 支持 GFM、代码高亮和 MathJax；HTML 使用 sandbox 实时预览，并加载相对 CSS、JavaScript、图片和字体。 |
 | 完整文件管理          | 支持新建、重命名、删除文件夹、剪切、复制、粘贴、下载和按落点目录拖拽上传。                                  |
@@ -44,18 +47,20 @@ CloudInk 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用�
 ### 对话与 Agent 执行
 
 - NDJSON 实时流式回复，可随时强制中止并保留已生成内容。
-- Claude 在工具调用前输出的过程说明会直接打印在对应工具之前，子 Agent 中间文本也会进入对话流；Thinking、Read、Write、Edit、Bash、Skill 和工具结果按执行顺序展示。
+- Claude Code 或 Codex 在工具调用前输出的过程说明会直接打印在对应工具之前；Thinking、WebSearch、Read、Write、Edit、Bash、Skill 和工具结果按真实执行顺序展示。
 - 工具卡片直接显示文件路径或 Bash description，详情中展示折叠的 `IN` / `OUT`。
 - 工具调用轮文本自动归入 Thinking，只有最终回答保存为助手正文。
 - Claude 需要确认时，在输入框上方显示 Submit answer 面板。
 - 回答支持复制、重试、耗时及输入/输出/缓存 Token 统计。
 - 中断后的会话可以通过“继续”恢复，避免返回 `No response requested.`。
+- 刷新正在执行的会话时会从后台运行状态恢复 Working 提示，并继续增量获取活动和最终回复；刷新浏览器不会主动中止 CLI 进程。
 
 ### 输入与内容
 
 - Markdown、GFM、自动语言识别的代码语法高亮和 MathJax 数学公式渲染。
 - `Auto`、`Plan`、`Manual`、`Edit automatically` 四种执行模式。
-- `/` 菜单动态读取 Claude CLI、用户配置、插件和工作区中的 Commands/Skills 及真实 description。
+- 输入框底部可切换 Claude Code / Codex 及各自真实配置的模型；Claude 模型来自 CLI 初始化信息，Codex 模型来自 `models_cache.json`、`config.toml` 或服务端配置。
+- `/` 菜单按当前后端动态读取 CLI、用户配置、插件和工作区中的 Commands/Skills 及真实 description。
 - `@` 搜索并引用当前用户工作区文件。
 - `/` 和 `@` 候选菜单支持方向键上下循环选择、`Enter` 确认及 `Esc` 关闭，当前项会自动滚动到可见区域。
 - 点击、拖拽或粘贴剪贴板截图上传附件；新附件直接保存到当前用户的工作区根目录，每条消息最多 10 个文件，单文件最大 500MB。
@@ -68,12 +73,23 @@ CloudInk 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用�
 - 会话地址为 `/sessions/:sessionId`，支持刷新恢复和 History API 导航。
 - 历史会话支持收藏置顶、取消收藏和删除；收藏状态按用户持久化，刷新或重新登录后仍然保留。
 - 新对话仅在首次发送真实内容时写入历史记录，不产生空白会话。
-- 侧边栏可切换历史记录与文件目录，支持拖拽调宽；桌面端收起后保留 56px 图标栏，可从栏内展开或直接切换对话/文件，移动端仍使用抽屉。
+- 侧边栏最左侧使用首页、定时任务、文件三个图标 Tab；首页包含新对话、项目和最近会话。侧边栏支持拖拽调宽，桌面端收起后保留 56px 图标栏，移动端仍使用抽屉。
+- 顶部“新对话”创建的是用户根工作区会话；项目中的新建对话使用该项目绑定的目录。普通历史会话默认不属于任何项目，只有显式创建于项目或通过“移至项目”操作后才会归属项目。
+- 项目支持创建、编辑、置顶和删除，可选择已有目录或创建新目录；项目会话支持单击整行切换、重命名、收藏、移动和删除。
 - 点击文件可展开类似 VS Code 的中间 Workspace；CodeMirror 根据文件类型提供代码高亮、行号、括号匹配、折叠与自动补全，并支持多标签编辑、未保存状态提示、标签关闭，以及按钮或 `Ctrl/Cmd+S` 保存。Markdown 文件可在渲染预览与源码编辑之间切换，预览支持 GFM、代码高亮和 MathJax 公式；HTML 文件也支持隔离预览与源码编辑，并可加载工作区内相对引用的 CSS、JavaScript、图片和字体。没有打开文件时 Workspace 自动隐藏，对话区域恢复完整宽度。
-- 桌面端首次打开 Workspace 时，侧边栏、Workspace、Chat 默认按 `15% / 60% / 25%` 分配宽度，仍可拖拽分隔线调整；双击分隔线可恢复默认比例。文件区域支持右键打开、重命名、删除、剪切、复制、粘贴、下载和新建文件；文件夹右键 Delete 会递归删除其中的所有文件和子目录，并关闭该目录下已经打开的编辑器标签。文件与文件夹的 Rename、New File 和 New Folder 都在文件树中直接内联命名，提供 ✓ 保存和 × 取消，也支持 `Enter` 确认、`Esc` 取消，不使用浏览器弹窗。Rename 使用独立状态和专用接口，提交期间会锁定当前命名行，成功后按服务端返回路径刷新文件树，失败则保留输入并在原位展示原因。右击文件夹后创建的文件或文件夹会放入该目录，空白区域也支持粘贴及上传，并可直接拖入文件上传。
+- 桌面端首次打开 Workspace 时，侧边栏、Workspace、Chat 默认按 `25% / 45% / 30%` 分配宽度，仍可拖拽分隔线调整；双击分隔线可恢复默认比例。文件区域支持右键打开、重命名、删除、剪切、复制、粘贴、下载和新建文件；文件夹右键 Delete 会递归删除其中的所有文件和子目录，并关闭该目录下已经打开的编辑器标签。文件与文件夹的 Rename、New File 和 New Folder 都在文件树中直接内联命名，提供 ✓ 保存和 × 取消，也支持 `Enter` 确认、`Esc` 取消，不使用浏览器弹窗。Rename 使用独立状态和专用接口，提交期间会锁定当前命名行，成功后按服务端返回路径刷新文件树，失败则保留输入并在原位展示原因。右击文件夹后创建的文件或文件夹会放入该目录，空白区域也支持粘贴及上传，并可直接拖入文件上传。
+- Agent 回复中的工作区相对路径和 CloudInk 工作区绝对路径可以直接点击，并在中间 Workspace 打开；`http(s)` 等外部链接仍按普通网页链接处理。
 - Cut/Copy 会在源文件上显示状态，Paste 到目录后自动刷新文件树；Cut 同时同步已打开标签的新路径。外部文件拖到文件夹节点时上传到该文件夹，拖到文件时上传到其所在目录，拖到空白处则上传到工作区根目录。
 - HTML 文件支持通过右键菜单发布为公开网页；包含 `index.html` 的文件夹也可发布为完整静态网站，目录内的 HTML、CSS、JavaScript、图片和字体按原相对路径访问。单页地址格式为 `/<username>/published/<page.html>?token=<token>`，文件夹首页使用 `/<username>/published/<folder>/?token=<token>`，无需在 URL 中写 `index.html`；已发布页面可以打开、复制链接或取消发布。公开页面无需登录，始终读取工作区文件的最新内容，并使用浏览器沙箱与登录态隔离。
-- 实际 Claude 工作目录为 `<WORKSPACE_DIR>/<username>`。
+- 根会话的 Agent 工作目录为 `<WORKSPACE_DIR>/<username>`；项目会话使用项目绑定的目录。
+
+### 定时任务
+
+- 定时任务使用五段 Cron 表达式，并支持 IANA 时区，例如 `Asia/Shanghai`。
+- 每个任务独立保存 Claude Code / Codex 后端、模型、执行模式，以及重叠时跳过或排队的策略。
+- 创建后由 CloudInk 在后台调度；每次执行都会生成独立会话，可以从执行记录进入聊天区域查看完整输入、Thinking、工具调用和最终回复。
+- 任务可以立即运行、启用、暂停、编辑或删除；删除任务时会同时清理执行记录和关联的定时会话。
+- Claude Code 会话也可以通过内置的 CloudInk MCP 工具自然语言创建和管理同一套定时任务，页面与 Agent 操作共享数据库。
 
 ### 响应式体验
 
@@ -91,7 +107,7 @@ CloudInk 是一个基于 React、Express、SQLite 和 Claude Code CLI 的多用�
 | API       | Express、TypeScript、Zod、Multer                        |
 | 数据      | SQLite、better-sqlite3                                  |
 | 认证      | JWT HttpOnly Cookie、bcrypt                             |
-| AI 运行时 | Claude Code CLI、`stream-json`、MCP                     |
+| AI 运行时 | Claude Code CLI、Codex CLI、`stream-json` / JSONL、MCP  |
 | 内容渲染  | react-markdown、remark-gfm、remark-math、rehype-mathjax |
 
 ```text
@@ -99,9 +115,11 @@ Browser
   ├── React UI ─────────────── NDJSON stream ──────────────┐
   └── HttpOnly session cookie                              │
                                                           ▼
-Express API ── SQLite (users / sessions / messages) ── Claude Code CLI
-     │                                                     │
-     └── <WORKSPACE_DIR>/<username> ◀── Read / Edit / Bash ┘
+Express API ── SQLite (users / projects / sessions / tasks / messages)
+     │                                      │
+     │                                      ├── Claude Code CLI
+     │                                      └── Codex CLI
+     └── <WORKSPACE_DIR>/<username> ◀── Read / Edit / Bash
 ```
 
 ## 快速开始
@@ -110,13 +128,17 @@ Express API ── SQLite (users / sessions / messages) ── Claude Code CLI
 
 - Node.js 20 或更高版本
 - npm
-- 已安装并完成认证的 Claude Code CLI
+- 至少安装并完成认证的 Claude Code CLI 或 Codex CLI
 
 先确认 CLI 可以正常运行：
 
 ```bash
 claude --version
 claude
+
+# 使用 Codex 时
+codex --version
+codex
 ```
 
 ### 安装与启动
@@ -131,7 +153,7 @@ npm run dev
 
 默认地址：
 
-- Web UI：<http://localhost>
+- Web UI：<http://localhost:5173>（以 `WEB_PORT` 为准）
 - API：<http://localhost:3001>
 
 开发模式下 Vite 会将 `/api` 代理到 Express。首次访问后注册账号即可开始使用。
@@ -140,7 +162,7 @@ npm run dev
 
 ```dotenv
 PORT=3001
-WEB_PORT=80
+WEB_PORT=5173
 COOKIE_SECURE=false
 APP_NAME=CloudInk
 ROOT_EMAIL=root@cloudink.com
@@ -148,25 +170,32 @@ ROOT_PASSWORD=replace-with-a-strong-root-password
 JWT_SECRET=replace-with-at-least-32-random-characters
 CLAUDE_CLI_PATH=claude
 CLAUDE_ALLOWED_TOOLS=Bash
+CODEX_CLI_PATH=codex
 WORKSPACE_DIR=/absolute/path/to/workspaces
 # CLAUDE_MODEL=sonnet
+# CODEX_MODEL=<model-id>
+# SCHEDULED_TASK_CONCURRENCY=2
 # DATA_DIR=data
 ```
 
-| 变量                   | 说明                               | 默认值                  |
-| ---------------------- | ---------------------------------- | ----------------------- |
-| `PORT`                 | Express API 端口                   | `3001`                  |
-| `WEB_PORT`             | Vite Web UI 端口                   | `80`                    |
-| `COOKIE_SECURE`        | 仅通过 HTTPS 发送登录 Cookie       | `false`                 |
-| `APP_NAME`             | 登录页、侧边栏与浏览器标题的品牌名 | `CloudInk`              |
-| `ROOT_EMAIL`           | Root 管理员登录邮箱                | `root@cloudink.local`   |
-| `ROOT_PASSWORD`        | 首次创建 Root 管理员使用的强密码   | 不创建 Root             |
-| `JWT_SECRET`           | JWT 密钥；生产环境必须使用强随机值 | 开发占位值              |
-| `CLAUDE_CLI_PATH`      | Claude CLI 命令或绝对路径          | `claude`                |
-| `CLAUDE_ALLOWED_TOOLS` | 自动允许的 Claude 工具             | `Bash`                  |
-| `WORKSPACE_DIR`        | 所有用户工作区的根目录             | `<DATA_DIR>/workspaces` |
-| `CLAUDE_MODEL`         | 可选的固定 Claude 模型             | CLI 默认模型            |
-| `DATA_DIR`             | SQLite 与默认工作区的数据目录      | `data`                  |
+| 变量                         | 说明                               | 默认值                    |
+| ---------------------------- | ---------------------------------- | ------------------------- |
+| `PORT`                       | Express API 端口                   | `3001`                    |
+| `WEB_PORT`                   | Vite Web UI 端口                   | `80`（示例配置为 `5173`） |
+| `COOKIE_SECURE`              | 仅通过 HTTPS 发送登录 Cookie       | `false`                   |
+| `APP_NAME`                   | 登录页、侧边栏与浏览器标题的品牌名 | `CloudInk`                |
+| `ROOT_EMAIL`                 | Root 管理员登录邮箱                | `root@cloudink.local`     |
+| `ROOT_PASSWORD`              | 首次创建 Root 管理员使用的强密码   | 不创建 Root               |
+| `JWT_SECRET`                 | JWT 密钥；生产环境必须使用强随机值 | 开发占位值                |
+| `CLAUDE_CLI_PATH`            | Claude CLI 命令或绝对路径          | `claude`                  |
+| `CLAUDE_ALLOWED_TOOLS`       | 自动允许的 Claude 工具             | `Bash`                    |
+| `WORKSPACE_DIR`              | 所有用户工作区的根目录             | `<DATA_DIR>/workspaces`   |
+| `CLAUDE_MODEL`               | 可选的固定 Claude 模型             | CLI 默认模型              |
+| `CODEX_CLI_PATH`             | Codex CLI 命令或绝对路径           | `codex`                   |
+| `CODEX_MODEL`                | 可选的固定 Codex 模型              | Codex 配置中的默认模型    |
+| `CODEX_HOME`                 | Codex 配置和模型缓存目录           | `~/.codex`                |
+| `SCHEDULED_TASK_CONCURRENCY` | 定时任务最大并发数                 | `2`                       |
+| `DATA_DIR`                   | SQLite 与默认工作区的数据目录      | `data`                    |
 
 修改 `WORKSPACE_DIR` 不会自动迁移已有数据。请先停止服务，将旧工作区移动到新位置并确保运行服务的系统账号拥有读写权限。
 
@@ -200,9 +229,9 @@ data/
         └── <uploaded-files>
 ```
 
-数据库关系为 `users → sessions → messages`。所有会话与消息查询都会同时校验当前用户。每个 Web 会话还对应一个独立 Claude CLI session ID：首轮使用 `--session-id`，后续使用 `--resume`。
+数据库保存 users、projects、sessions、messages、scheduled_tasks 和 scheduled_task_runs。所有会话、项目、任务与消息查询都会校验当前用户。Claude Code 会话通过 session ID 续接；Codex 会话保存 thread ID，并在后续请求中恢复同一线程。
 
-未设置 `CLAUDE_MODEL` 时，服务启动会执行一次无工具、无会话持久化的轻量探测，从 Claude CLI 初始化事件读取实际模型；失败或超时后显示 `CLI default`，正式对话仍会根据运行事件更新模型。
+未设置 `CLAUDE_MODEL` 时，服务会执行一次无工具、无会话持久化的轻量探测，从 Claude CLI 初始化事件读取实际模型；失败或超时后显示 `CLI default`。Codex 模型列表会读取 `CODEX_MODEL`、`$CODEX_HOME/config.toml` 和 `models_cache.json`，页面按后端分别展示可用模型。
 
 工作区编辑器通过 `GET /api/workspace/file?path=...` 读取文件，通过 `PUT /api/workspace/file` 保存内容；文件管理接口位于 `/api/workspace/entry`、`/api/workspace/rename`、`/api/workspace/paste` 和 `/api/workspace/download`。接口只接受当前登录用户工作区内的路径，在线编辑上限为 5MB；聊天区上传的附件直接写入工作区根目录，文件区上传则按拖放目标目录写入，单文件上限均为 500MB。
 
@@ -237,7 +266,7 @@ npm start            # 启动生产服务
 
 ```text
 src/                 React 页面、消息渲染、输入区与响应式样式
-server/              认证、SQLite、上传、Claude CLI 与流事件解析
+server/              认证、SQLite、上传、调度器、Claude/Codex CLI 与流事件解析
 docs/images/         README 产品截图
 data/                本地数据库和默认用户工作区（运行时生成）
 Agent.md             后续开发代理的实现约束与验证清单
