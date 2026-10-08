@@ -2,6 +2,76 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const MAX_EDITABLE_FILE_SIZE = 5 * 1024 * 1024;
+export const MAX_WORKSPACE_FILES = 2000;
+
+const IGNORED_WORKSPACE_DIRECTORIES = new Set([
+  ".git",
+  "node_modules",
+  ".claude",
+  ".cloudink-projects",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".cache",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".next",
+  "dist",
+  "build",
+]);
+
+export function listWorkspaceEntries(
+  workspace: string,
+  maxFiles = MAX_WORKSPACE_FILES,
+) {
+  const files: Array<{ name: string; path: string; size: number }> = [];
+  const directories: string[] = [];
+  const pending = [workspace];
+  let pendingIndex = 0;
+  // Breadth-first traversal prevents one large project from consuming the
+  // whole response before sibling project directories have been discovered.
+  while (pendingIndex < pending.length && files.length < maxFiles) {
+    const directory = pending[pendingIndex++];
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (files.length >= maxFiles || entry.isSymbolicLink()) continue;
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!IGNORED_WORKSPACE_DIRECTORIES.has(entry.name)) {
+          directories.push(
+            path.relative(workspace, absolutePath).split(path.sep).join("/"),
+          );
+          pending.push(absolutePath);
+        }
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        files.push({
+          name: entry.name,
+          path: path
+            .relative(workspace, absolutePath)
+            .split(path.sep)
+            .join("/"),
+          size: fs.statSync(absolutePath).size,
+        });
+      } catch {}
+    }
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  directories.sort((a, b) => a.localeCompare(b));
+  return {
+    files,
+    directories,
+    truncated: files.length >= maxFiles && pendingIndex < pending.length,
+  };
+}
 
 export function resolveWorkspaceFile(workspace: string, requestedPath: string) {
   if (!requestedPath || path.isAbsolute(requestedPath))

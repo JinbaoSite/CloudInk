@@ -1,15 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import type { Extension } from "@codemirror/state";
-import {
-  Circle,
-  Eye,
-  Menu,
-  Pencil,
-  Save,
-  X,
-} from "lucide-react";
+import { Circle, Eye, Menu, Pencil, Save, X } from "lucide-react";
 import MarkdownMessage from "./MarkdownMessage";
+import { isWorkspaceImage, workspacePreviewUrl } from "./workspace-preview";
 
 const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -140,7 +134,7 @@ export default function WorkspaceEditor({
   const dirty = activeFile.content !== activeFile.savedContent;
   const markdown = isMarkdownFile(activeFile.path);
   const html = isHtmlFile(activeFile.path);
-  const previewable = markdown || html;
+  const image = isWorkspaceImage(activeFile.path);
   const fileView = fileViews[activeFile.path] || "preview";
   const setFileView = (view: "preview" | "edit") =>
     setFileViews((current) => ({
@@ -192,7 +186,7 @@ export default function WorkspaceEditor({
         })}
       </div>
       <div
-        className={`workspace-editor-body${previewable && !activeFile.loading && !activeFile.error ? " previewable-file" : ""}`}
+        className={`workspace-editor-body${(markdown || html) && !activeFile.loading && !activeFile.error ? " previewable-file" : ""}${image && !activeFile.loading && !activeFile.error ? " image-file" : ""}`}
       >
         {activeFile.loading ? (
           <div className="workspace-editor-message">正在打开文件…</div>
@@ -202,7 +196,7 @@ export default function WorkspaceEditor({
           </div>
         ) : (
           <>
-            {previewable && (
+            {(markdown || html) && (
               <div
                 className="workspace-preview-toolbar"
                 role="group"
@@ -234,7 +228,9 @@ export default function WorkspaceEditor({
                 aria-label={`预览 ${activeFile.path}`}
               >
                 {activeFile.content ? (
-                  <MarkdownMessage>{activeFile.content}</MarkdownMessage>
+                  <MarkdownMessage markdownPath={activeFile.path}>
+                    {activeFile.content}
+                  </MarkdownMessage>
                 ) : (
                   <div className="workspace-markdown-empty">
                     此 Markdown 文件暂无内容
@@ -251,6 +247,13 @@ export default function WorkspaceEditor({
                   activeFile.path,
                 )}
               />
+            ) : image ? (
+              <div className="workspace-image-preview">
+                <img
+                  src={workspacePreviewUrl(activeFile.path, BASE_PATH)}
+                  alt={activeFile.name}
+                />
+              </div>
             ) : (
               <CodeMirror
                 className="workspace-code-editor"

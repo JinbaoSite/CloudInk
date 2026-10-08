@@ -85,6 +85,7 @@ import {
 } from "lucide-react";
 import WorkspaceMentionText from "./WorkspaceMentionText";
 import type { OpenWorkspaceFile } from "./WorkspaceEditor";
+import { isWorkspaceImage } from "./workspace-preview";
 import "./styles.css";
 import "./chat-layout.css";
 import "./markdown.css";
@@ -228,15 +229,12 @@ function scopedApiPath(url: string) {
   return `${url}${url.includes("?") ? "&" : "?"}project_id=${encodeURIComponent(activeProjectIdForRequests)}`;
 }
 function workspacePreviewUrl(filePath: string, prefix = "") {
-  const resource = `${BASE_PATH}/api/workspace/preview/${[prefix, filePath]
+  return `${BASE_PATH}/api/workspace/preview/${[prefix, filePath]
     .filter(Boolean)
     .join("/")
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/")}`;
-  return activeProjectIdForRequests
-    ? `${resource}?project_id=${encodeURIComponent(activeProjectIdForRequests)}`
-    : resource;
 }
 function sessionIdFromLocation() {
   const relativePath = window.location.pathname.slice(BASE_PATH.length);
@@ -2022,8 +2020,14 @@ function App() {
       return;
     setOpenWorkspaceFiles((current) => [
       ...current,
-      { ...file, content: "", savedContent: "", loading: true },
+      {
+        ...file,
+        content: "",
+        savedContent: "",
+        loading: !isWorkspaceImage(file.path),
+      },
     ]);
+    if (isWorkspaceImage(file.path)) return;
     try {
       const loaded = (await api(
         `/workspace/file?path=${encodeURIComponent(file.path)}`,

@@ -23,6 +23,7 @@ import {
   wakeTaskScheduler,
 } from "./scheduler.js";
 import {
+  listWorkspaceEntries,
   readEditableFile,
   removeWorkspaceEntry,
   resolveWorkspaceDirectory,
@@ -1031,55 +1032,11 @@ app.get("/api/slash-items", requireAuth, async (req, res) => {
 });
 app.get("/api/workspace/files", requireAuth, (req, res) => {
   const uid = (req as AuthedRequest).userId;
-  const workspace = projectWorkspaceFor(uid, requestedProjectId(req));
-  if (!workspace) return res.status(404).json({ error: "项目不存在" });
-  const ignored = new Set([
-    ".git",
-    "node_modules",
-    ".claude",
-    ".cloudink-projects",
-    "dist",
-    "build",
-  ]);
-  const files: Array<{ name: string; path: string; size: number }> = [];
-  const directories: string[] = [];
-  const pending = [workspace];
-  while (pending.length && files.length < 2000) {
-    const directory = pending.pop()!;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(directory, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (files.length >= 2000 || entry.isSymbolicLink()) continue;
-      const absolutePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!ignored.has(entry.name)) {
-          directories.push(
-            path.relative(workspace, absolutePath).split(path.sep).join("/"),
-          );
-          pending.push(absolutePath);
-        }
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      try {
-        files.push({
-          name: entry.name,
-          path: path
-            .relative(workspace, absolutePath)
-            .split(path.sep)
-            .join("/"),
-          size: fs.statSync(absolutePath).size,
-        });
-      } catch {}
-    }
-  }
-  files.sort((a, b) => a.path.localeCompare(b.path));
-  directories.sort((a, b) => a.localeCompare(b));
-  res.json({ files, directories, truncated: files.length >= 2000 });
+  // The Files tab is a user-level browser. Project scoping applies to agent
+  // execution, attachments, and slash discovery, never to this file tree.
+  const workspace = projectWorkspaceFor(uid);
+  if (!workspace) return res.status(404).json({ error: "用户不存在" });
+  res.json(listWorkspaceEntries(workspace));
 });
 function userWorkspace(req: express.Request) {
   const uid = (req as AuthedRequest).userId;

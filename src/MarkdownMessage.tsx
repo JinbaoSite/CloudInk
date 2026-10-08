@@ -12,6 +12,7 @@ import rehypeMathjax from "rehype-mathjax/browser";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { resolveWorkspaceLink } from "./workspace-links";
+import { resolveMarkdownImageUrl } from "./workspace-preview";
 
 const BASE_PATH = import.meta.env.BASE_URL;
 let mathJaxLoader: Promise<void> | undefined;
@@ -59,11 +60,13 @@ function RenderedMarkdown({
   streaming,
   workspacePaths,
   onOpenWorkspaceFile,
+  markdownPath,
 }: {
   children: string;
   streaming: boolean;
   workspacePaths: string[];
   onOpenWorkspaceFile?: (path: string) => void;
+  markdownPath?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -87,6 +90,22 @@ function RenderedMarkdown({
           rehypeMathjax,
         ]}
         components={{
+          img: ({ src, alt, ...props }) => (
+            <img
+              src={
+                markdownPath
+                  ? resolveMarkdownImageUrl(
+                      src,
+                      markdownPath,
+                      BASE_PATH.replace(/\/$/, ""),
+                    )
+                  : src
+              }
+              alt={alt || ""}
+              loading="lazy"
+              {...props}
+            />
+          ),
           a: ({ href, children: content, ...props }) => {
             const path = resolveWorkspaceLink(href, workspacePaths);
             if (!path || !onOpenWorkspaceFile)
@@ -264,11 +283,13 @@ function MarkdownMessage({
   streaming = false,
   workspacePaths = [],
   onOpenWorkspaceFile,
+  markdownPath,
 }: {
   children: string;
   streaming?: boolean;
   workspacePaths?: string[];
   onOpenWorkspaceFile?: (path: string) => void;
+  markdownPath?: string;
 }) {
   return (
     <MarkdownErrorBoundary content={children}>
@@ -276,6 +297,7 @@ function MarkdownMessage({
         streaming={streaming}
         workspacePaths={workspacePaths}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
+        markdownPath={markdownPath}
       >
         {children}
       </RenderedMarkdown>
@@ -288,5 +310,6 @@ export default memo(
   (previous, next) =>
     previous.children === next.children &&
     previous.streaming === next.streaming &&
-    previous.workspacePaths === next.workspacePaths,
+    previous.workspacePaths === next.workspacePaths &&
+    previous.markdownPath === next.markdownPath,
 );

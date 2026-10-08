@@ -4,11 +4,39 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  listWorkspaceEntries,
   readEditableFile,
   removeWorkspaceEntry,
   resolveWorkspaceFile,
   resolveWorkspaceTarget,
 } from "./workspace.js";
+
+test("workspace listing includes sibling projects and ignores dependency caches", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "cloudink-list-"));
+  try {
+    fs.mkdirSync(path.join(workspace, "project-a", ".venv"), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(workspace, "project-b"), { recursive: true });
+    for (let index = 0; index < 20; index += 1)
+      fs.writeFileSync(
+        path.join(workspace, "project-a", ".venv", `${index}.py`),
+        "ignored",
+      );
+    fs.writeFileSync(path.join(workspace, "project-a", "a.ts"), "a");
+    fs.writeFileSync(path.join(workspace, "project-b", "b.ts"), "b");
+
+    const result = listWorkspaceEntries(workspace, 10);
+    assert.deepEqual(
+      result.files.map((file) => file.path),
+      ["project-a/a.ts", "project-b/b.ts"],
+    );
+    assert.deepEqual(result.directories, ["project-a", "project-b"]);
+    assert.equal(result.truncated, false);
+  } finally {
+    fs.rmSync(workspace, { recursive: true });
+  }
+});
 
 test("recursive folder deletion removes all descendants", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "claude-ui-delete-"));
