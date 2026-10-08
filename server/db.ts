@@ -89,6 +89,17 @@ if (!sessionColumns.some((column) => column.name === "codex_thread_id")) {
 if (!sessionColumns.some((column) => column.name === "project_id")) {
   db.exec("ALTER TABLE sessions ADD COLUMN project_id TEXT");
 }
+if (!sessionColumns.some((column) => column.name === "last_assistant_at")) {
+  db.exec("ALTER TABLE sessions ADD COLUMN last_assistant_at TEXT");
+}
+if (!sessionColumns.some((column) => column.name === "last_read_at")) {
+  db.exec("ALTER TABLE sessions ADD COLUMN last_read_at TEXT");
+  // Existing conversations were already visible before unread tracking was
+  // introduced; do not mark the whole history as newly unread.
+  db.exec(
+    "UPDATE sessions SET last_read_at=updated_at WHERE last_read_at IS NULL",
+  );
+}
 db.exec(
   "CREATE INDEX IF NOT EXISTS sessions_user_favorite_updated ON sessions(user_id,favorite DESC,updated_at DESC)",
 );

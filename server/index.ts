@@ -1442,7 +1442,10 @@ app.get("/api/sessions", requireAuth, (req, res) => {
     user.username === ROOT_USERNAME
       ? db
           .prepare(
-            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,s.backend,s.project_id,u.username
+            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,s.backend,s.project_id,u.username,
+                    CASE WHEN s.last_assistant_at IS NOT NULL AND
+                                   (s.last_read_at IS NULL OR s.last_assistant_at>s.last_read_at)
+                         THEN 1 ELSE 0 END AS unread
            FROM sessions s JOIN users u ON u.id=s.user_id
            WHERE (?='' OR (?='unassigned' AND s.project_id IS NULL) OR s.project_id=?)
              AND NOT EXISTS (SELECT 1 FROM scheduled_task_runs r WHERE r.session_id=s.id)
@@ -1451,7 +1454,10 @@ app.get("/api/sessions", requireAuth, (req, res) => {
           .all(projectId, projectId, projectId)
       : db
           .prepare(
-            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,s.backend,s.project_id,u.username
+            `SELECT s.id,s.title,s.created_at,s.updated_at,s.favorite,s.backend,s.project_id,u.username,
+                    CASE WHEN s.last_assistant_at IS NOT NULL AND
+                                   (s.last_read_at IS NULL OR s.last_assistant_at>s.last_read_at)
+                         THEN 1 ELSE 0 END AS unread
            FROM sessions s JOIN users u ON u.id=s.user_id
            WHERE s.user_id=?
              AND (?='' OR (?='unassigned' AND s.project_id IS NULL) OR s.project_id=?)
@@ -1459,7 +1465,14 @@ app.get("/api/sessions", requireAuth, (req, res) => {
            ORDER BY s.favorite DESC,s.updated_at DESC`,
           )
           .all(uid, projectId, projectId, projectId);
-  return res.json(sessions);
+  return res.json(
+    (sessions as Array<Record<string, unknown> & { id: string }>).map(
+      (session) => ({
+        ...session,
+        running: activeClaudeRuns.has(session.id),
+      }),
+    ),
+  );
 });
 app.post("/api/sessions", requireAuth, (req, res) => {
   const backend = z
@@ -1481,6 +1494,7 @@ app.post("/api/sessions", requireAuth, (req, res) => {
   db.prepare(
     "INSERT INTO sessions(id,user_id,title,claude_session_id,created_at,updated_at,favorite,backend,project_id) VALUES(?,?,?,?,?,?,0,?,?)",
   ).run(id, userId, "新对话", claude, now, now, backend, project?.id || null);
+  db.prepare("UPDATE sessions SET last_read_at=? WHERE id=?").run(now, id);
   res.status(201).json({
     id,
     title: "新对话",
@@ -1490,6 +1504,14 @@ app.post("/api/sessions", requireAuth, (req, res) => {
     backend,
     project_id: project?.id || null,
   });
+});
+app.post("/api/sessions/:id/read", requireAuth, (req, res) => {
+  const readAt = new Date().toISOString();
+  const result = db
+    .prepare("UPDATE sessions SET last_read_at=? WHERE id=? AND user_id=?")
+    .run(readAt, req.params.id, (req as AuthedRequest).userId);
+  if (!result.changes) return res.status(404).json({ error: "会话不存在" });
+  return res.json({ id: req.params.id, unread: 0, last_read_at: readAt });
 });
 app.post("/api/sessions/:id/favorite", requireAuth, (req, res) => {
   const payload = z.object({ favorite: z.boolean() }).safeParse(req.body);
@@ -1923,10 +1945,9 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
           );
           sendEvent({ type: "metrics", metrics: responseMetrics });
         }
-        db.prepare("UPDATE sessions SET updated_at=? WHERE id=?").run(
-          completedAt,
-          s.id,
-        );
+        db.prepare(
+          "UPDATE sessions SET updated_at=?,last_assistant_at=? WHERE id=?",
+        ).run(completedAt, completedAt, s.id);
       }
       sendEvent(
         code === 0
@@ -2147,7 +2168,9 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
         );
         sendEvent({ type: "metrics", metrics: responseMetrics });
       }
-      db.prepare("UPDATE sessions SET updated_at=? WHERE id=?").run(t, s.id);
+      db.prepare(
+        "UPDATE sessions SET updated_at=?,last_assistant_at=? WHERE id=?",
+      ).run(t, t, s.id);
     }
     sendEvent(
       code === 0

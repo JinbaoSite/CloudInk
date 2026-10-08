@@ -107,6 +107,8 @@ type Session = {
   username: string;
   backend?: "claude" | "codex";
   project_id?: string | null;
+  running?: boolean;
+  unread?: 0 | 1;
 };
 type Project = {
   id: string;
@@ -780,6 +782,16 @@ function App() {
     (registration) => registration.approval_status === "pending",
   ).length;
   const load = () => api("/sessions").then(setSessions);
+  async function markSessionRead(sessionId: string) {
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === sessionId ? { ...session, unread: 0 } : session,
+      ),
+    );
+    await api(`/sessions/${sessionId}/read`, { method: "POST" }).catch(
+      () => undefined,
+    );
+  }
   async function loadProjects() {
     const [result, allSessions] = (await Promise.all([
       api("/projects"),
@@ -1222,6 +1234,15 @@ function App() {
       .catch(() => setMe(null));
   }, []);
   useEffect(() => {
+    if (!me) return;
+    const timer = window.setInterval(() => {
+      void api("/sessions")
+        .then(setSessions)
+        .catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [me]);
+  useEffect(() => {
     const sessionBackend = activeSession?.backend;
     if (!sessionBackend || sessionBackend === currentBackend) return;
     const backend = backendOptions.find(
@@ -1418,6 +1439,7 @@ function App() {
   }, [showMentionMenu, mentionSelectedIndex]);
   useEffect(() => {
     if (!active || !me) return;
+    void markSessionRead(active);
     messageCursorRef.current = 0;
     setPendingQuestion(null);
     setQuestionAnswers({});
@@ -1486,6 +1508,7 @@ function App() {
               ...items.map((message) => message.cursor || 0),
             );
             setMessages(mergeActivityMessages(items));
+            void markSessionRead(active);
           }
         }
         firstCheck = false;
@@ -2213,6 +2236,13 @@ function App() {
         }),
       });
       if (!r.ok) throw new Error((await r.json()).error);
+      setSessions((current) =>
+        current.map((session) =>
+          session.id === id
+            ? { ...session, running: true, unread: 0 }
+            : session,
+        ),
+      );
       setAttachments([]);
       const reader = r.body!.getReader(),
         decoder = new TextDecoder();
@@ -2346,6 +2376,7 @@ function App() {
       sendInFlightRef.current = false;
       if (responseAbortRef.current === requestController)
         responseAbortRef.current = null;
+      if (id && sessionIdFromLocation() === id) await markSessionRead(id);
       await load().catch(() => undefined);
       if (id && sessionIdFromLocation() === id) {
         await api(`/sessions/${id}/messages`)
@@ -2426,6 +2457,19 @@ function App() {
           selectSession(session);
         }}
       >
+        {session.running ? (
+          <span
+            className="session-status-indicator running"
+            title="Agent 正在运行"
+            aria-label="Agent 正在运行"
+          />
+        ) : session.unread ? (
+          <span
+            className="session-status-indicator unread"
+            title="Agent 已回复，尚未阅读"
+            aria-label="Agent 已回复，尚未阅读"
+          />
+        ) : null}
         <a
           className="session-link"
           href={`${BASE_PATH}/sessions/${encodeURIComponent(session.id)}`}

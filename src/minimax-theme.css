@@ -992,6 +992,41 @@ aside {
   min-width: 0;
 }
 
+.session-status-indicator {
+  position: absolute;
+  top: calc(50% - 4px);
+  left: -4px;
+  display: block;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.session-status-indicator.running {
+  border: 1.5px solid #98a0a7;
+  border-top-color: #2775d7;
+  animation: session-status-spin 0.75s linear infinite;
+}
+
+.session-status-indicator.unread {
+  background: #35a66f;
+  box-shadow: 0 0 0 2px rgb(53 166 111 / 12%);
+}
+
+@keyframes session-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-status-indicator.running {
+    animation-duration: 1.8s;
+  }
+}
+
 .session-more-button {
   visibility: hidden;
   width: 28px;
