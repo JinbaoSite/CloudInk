@@ -1,36 +1,30 @@
-type ActivityMessage = {
+export type OrderedMessage = {
   role: string;
   content: string;
   created_at?: string;
 };
 
-function activityKind(message: ActivityMessage) {
-  if (message.role !== "activity") return null;
-  try {
-    return (JSON.parse(message.content) as { kind?: string }).kind || null;
-  } catch {
-    return null;
-  }
+/**
+ * Message order is authoritative. The server persists stream events in arrival
+ * order, so the client must never infer a different order from activity kind
+ * or timestamp (multiple events can legitimately share a timestamp).
+ */
+export function preserveMessageOrder<T extends OrderedMessage>(messages: T[]) {
+  return [...messages];
 }
 
-export function restoreNarrationOrder<T extends ActivityMessage>(
+export function findActivityInCurrentTurn<T extends OrderedMessage>(
   messages: T[],
+  toolUseId: string,
 ) {
-  const ordered = [...messages];
-  for (let index = 0; index < ordered.length; index += 1) {
-    if (activityKind(ordered[index]) !== "narration") continue;
-    const batchCreatedAt = ordered[index].created_at;
-    if (!batchCreatedAt) continue;
-    let target = index;
-    while (
-      target > 0 &&
-      activityKind(ordered[target - 1]) === "tool" &&
-      ordered[target - 1].created_at === batchCreatedAt
-    )
-      target -= 1;
-    if (target === index) continue;
-    const [narration] = ordered.splice(index, 1);
-    ordered.splice(target, 0, narration);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" || message.role === "assistant") break;
+    if (message.role !== "activity") continue;
+    try {
+      const activity = JSON.parse(message.content) as { toolUseId?: string };
+      if (activity.toolUseId === toolUseId) return index;
+    } catch {}
   }
-  return ordered;
+  return -1;
 }

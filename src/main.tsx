@@ -80,17 +80,23 @@ import {
   X as faXmark,
   ChevronRight,
   Plus,
+  Search,
   type LucideIcon,
   type LucideProps,
 } from "lucide-react";
 import WorkspaceMentionText from "./WorkspaceMentionText";
+import EditFilesDiff from "./EditFilesDiff";
+import { isWebSearch, webSearchPresentation } from "./web-search";
 import type { OpenWorkspaceFile } from "./WorkspaceEditor";
 import { isWorkspaceImage } from "./workspace-preview";
 import "./styles.css";
 import "./chat-layout.css";
 import "./markdown.css";
 import "./activity.css";
-import { restoreNarrationOrder } from "./message-order";
+import {
+  findActivityInCurrentTurn,
+  preserveMessageOrder,
+} from "./message-order";
 import "./composer.css";
 import "./workspace-editor.css";
 import "./minimax-theme.css";
@@ -145,7 +151,12 @@ type ResponseMetrics = {
 };
 type ExecutionMode = "auto" | "plan" | "manual" | "acceptEdits";
 type Attachment = { name: string; path: string; size: number };
-type WorkspaceFile = { name: string; path: string; size: number };
+type WorkspaceFile = {
+  name: string;
+  path: string;
+  size: number;
+  modifiedAt?: number;
+};
 type PublishedPage = {
   file_path: string;
   kind: "file" | "folder";
@@ -325,7 +336,6 @@ function mergeActivityMessages(messages: Message[]) {
     } catch {}
   }
   const merged: Message[] = [];
-  const tools = new Map<string, number>();
   for (const message of messages) {
     if (message.role === "metrics") continue;
     const hydratedMessage =
@@ -340,17 +350,17 @@ function mergeActivityMessages(messages: Message[]) {
       continue;
     }
     if (activity.kind === "tool") {
-      const previousIndex = tools.get(activity.toolUseId);
-      if (previousIndex != null) merged[previousIndex] = message;
-      else {
-        tools.set(activity.toolUseId, merged.length);
-        merged.push(message);
-      }
+      const previousIndex = findActivityInCurrentTurn(
+        merged,
+        activity.toolUseId,
+      );
+      if (previousIndex >= 0) merged[previousIndex] = message;
+      else merged.push(message);
       continue;
     }
     if (activity.kind === "tool_result") {
-      const toolIndex = tools.get(activity.toolUseId);
-      if (toolIndex != null) {
+      const toolIndex = findActivityInCurrentTurn(merged, activity.toolUseId);
+      if (toolIndex >= 0) {
         const tool = parseActivity(merged[toolIndex]);
         if (tool) {
           merged[toolIndex] = {
@@ -367,10 +377,7 @@ function mergeActivityMessages(messages: Message[]) {
     }
     merged.push(message);
   }
-  // Older Claude events can persist a narration after the tool from the same
-  // event batch. Never move it across tools from an earlier batch: Codex emits
-  // intentional narration/tool pairs in chronological order.
-  return restoreNarrationOrder(merged);
+  return preserveMessageOrder(merged);
 }
 function appendMessageUpdates(current: Message[], updates: Message[]) {
   const replacements = new Map(
@@ -751,6 +758,8 @@ function App() {
   const resizingWorkspaceRef = useRef(false);
   const fileDragDepthRef = useRef(0);
   const slashItemsRequestRef = useRef(0);
+  const workspaceFilesRequestRef = useRef(false);
+  const workspaceFilesVersionRef = useRef("");
   const slashMatch = input.match(/(?:^|\s)(\/[^\s]*)$/);
   const slashQuery = slashMatch?.[1].toLowerCase() || "";
   const mentionMatch = input.match(/(?:^|\s)@([^\s@]*)$/);
@@ -772,6 +781,12 @@ function App() {
   const activeMode =
     executionModes.find((option) => option.value === mode) || executionModes[0];
   const activeSession = sessions.find((session) => session.id === active);
+  const conversationProjectId = active
+    ? activeSession?.project_id || ""
+    : activeProjectId;
+  const conversationProject = projects.find(
+    (project) => project.id === conversationProjectId,
+  );
   const activeBackend =
     backendOptions.find((backend) => backend.value === currentBackend) ||
     backendOptions[0];
@@ -1271,6 +1286,19 @@ function App() {
     void loadWorkspaceFiles();
   }, [me, workspaceFilesLoaded, workspaceFilesLoading]);
   useEffect(() => {
+    if (!me || sidebarView !== "files" || !workspaceFilesLoaded) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible")
+        void loadWorkspaceFiles(false, true);
+    };
+    const timer = window.setInterval(refresh, 2500);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [me, sidebarView, workspaceFilesLoaded]);
+  useEffect(() => {
     if (!accountMenuOpen && !accountPanel && !showApprovalPanel) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
       if (accountPanel === "password") return;
@@ -1720,23 +1748,40 @@ function App() {
     setShowSlashMenu(false);
     focusComposerAt(cursorPosition);
   }
-  async function loadWorkspaceFiles(force = false) {
-    if ((!force && workspaceFilesLoaded) || workspaceFilesLoading) return;
-    setWorkspaceFilesLoading(true);
+  async function loadWorkspaceFiles(force = false, silent = false) {
+    if (
+      (!force && workspaceFilesLoaded && !silent) ||
+      workspaceFilesRequestRef.current
+    )
+      return;
+    workspaceFilesRequestRef.current = true;
+    if (!silent) setWorkspaceFilesLoading(true);
     try {
-      const publicationsRequest = (
-        api("/workspace/publications", undefined, false) as Promise<{
-          pages: PublishedPage[];
-        }>
-      ).catch(() => null);
-      const result = (await api("/workspace/files", undefined, false)) as {
-        files: WorkspaceFile[];
-        directories: string[];
+      const publicationsRequest = silent
+        ? null
+        : (
+            api("/workspace/publications", undefined, false) as Promise<{
+              pages: PublishedPage[];
+            }>
+          ).catch(() => null);
+      const version = force ? "" : workspaceFilesVersionRef.current;
+      const result = (await api(
+        `/workspace/files${version ? `?version=${encodeURIComponent(version)}` : ""}`,
+        undefined,
+        false,
+      )) as {
+        changed: boolean;
+        version: string;
+        files?: WorkspaceFile[];
+        directories?: string[];
       };
-      setWorkspaceFiles(result.files);
-      setWorkspaceDirectories(result.directories || []);
+      workspaceFilesVersionRef.current = result.version || "";
+      if (result.changed && result.files) {
+        setWorkspaceFiles(result.files);
+        setWorkspaceDirectories(result.directories || []);
+      }
       setWorkspaceFilesLoaded(true);
-      void publicationsRequest.then((publications) => {
+      void publicationsRequest?.then((publications) => {
         if (!publications) return;
         setPublishedPages(
           Object.fromEntries(
@@ -1745,15 +1790,16 @@ function App() {
         );
       });
     } catch (loadError) {
-      setError((loadError as Error).message);
+      if (!silent) setError((loadError as Error).message);
     } finally {
-      setWorkspaceFilesLoading(false);
+      workspaceFilesRequestRef.current = false;
+      if (!silent) setWorkspaceFilesLoading(false);
     }
   }
   function showWorkspaceFiles() {
     setSidebarView("files");
     setSidebarCollapsed(false);
-    void loadWorkspaceFiles();
+    void loadWorkspaceFiles(false, true);
     // Give the small directory response and React paint priority. The heavier
     // CodeMirror chunk can warm in the background after the sidebar is ready.
     window.setTimeout(() => void loadWorkspaceEditor(), 600);
@@ -2293,10 +2339,10 @@ function App() {
           const incomingActivity = evt.activity;
           setMessages((items) => {
             if (incomingActivity.toolUseId) {
-              const existingIndex = items.findIndex((message) => {
-                const existing = parseActivity(message);
-                return existing?.toolUseId === incomingActivity.toolUseId;
-              });
+              const existingIndex = findActivityInCurrentTurn(
+                items,
+                incomingActivity.toolUseId,
+              );
               if (existingIndex >= 0) {
                 const next = [...items];
                 next[existingIndex] = {
@@ -2310,22 +2356,14 @@ function App() {
               (message) => message.id === assistantMessageId,
             );
             if (assistantIndex < 0) return items;
-            let insertionIndex = assistantIndex;
-            if (incomingActivity.kind === "narration") {
-              while (
-                insertionIndex > 0 &&
-                parseActivity(items[insertionIndex - 1])?.kind === "tool"
-              )
-                insertionIndex -= 1;
-            }
             return [
-              ...items.slice(0, insertionIndex),
+              ...items.slice(0, assistantIndex),
               {
                 id: localId("activity"),
                 role: "activity",
                 content: JSON.stringify(incomingActivity),
               },
-              ...items.slice(insertionIndex),
+              ...items.slice(assistantIndex),
             ];
           });
         }
@@ -3826,7 +3864,11 @@ function App() {
         >
           {messages.length === 0 && (
             <div className="empty">
-              <b>今天想构建什么？</b>
+              <b>
+                {conversationProject
+                  ? `今天想在${conversationProject.name}构建什么？`
+                  : "今天想构建什么？"}
+              </b>
               <span>
                 直接描述你的任务，CloudInk
                 可以读取、编辑并运行独立工作区中的代码。
@@ -5079,8 +5121,16 @@ function buildFileTree(
     }
     return node;
   };
-  directories.forEach(ensureDirectory);
+  const containsHiddenDirectory = (entryPath: string, file = false) => {
+    const parts = entryPath.split("/").filter(Boolean);
+    const directories = file ? parts.slice(0, -1) : parts;
+    return directories.some((part) => part.startsWith("."));
+  };
+  directories
+    .filter((directory) => !containsHiddenDirectory(directory))
+    .forEach(ensureDirectory);
   for (const file of files) {
+    if (containsHiddenDirectory(file.path, true)) continue;
     const parts = file.path.split("/");
     const node = ensureDirectory(parts.slice(0, -1).join("/"));
     node.files.push(file);
@@ -5682,7 +5732,15 @@ const ActivityCard = memo(function ActivityCard({
       className={`activity-card ${activity.kind} ${activity.isError ? "failed" : ""} ${inProgress ? "in-progress" : ""}`}
     >
       <summary>
-        <span className="activity-icon">{icon}</span>
+        <span className="activity-icon">
+          {activity.kind === "tool" &&
+          isWebSearch(activity) &&
+          !activity.isError ? (
+            <Search size={14} aria-hidden="true" />
+          ) : (
+            icon
+          )}
+        </span>
         <span className="activity-label">
           <strong>{title.keyword}</strong>
           {title.description && (
@@ -5730,11 +5788,62 @@ function ActivityDetail({ activity }: { activity: Activity }) {
     );
   }
   if (activity.kind === "tool") {
+    if (isWebSearch(activity)) {
+      const search = webSearchPresentation(activity);
+      return (
+        <div className="activity-detail web-search-detail">
+          {search.input ? (
+            <div className="web-search-query">
+              <Search size={14} aria-hidden="true" />
+              <div>
+                <span>搜索内容</span>
+                <p>{search.input}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="web-search-empty">
+              {activity.isError
+                ? "搜索失败"
+                : activity.output != null
+                  ? "搜索已完成"
+                  : "正在搜索…"}
+            </p>
+          )}
+          {search.output ? (
+            <div className="tool-io">
+              <section className={activity.isError ? "io-error" : ""}>
+                <b>OUT</b>
+                <pre>{search.output}</pre>
+              </section>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+    const input = formatActivityInput(activity);
+    const isEdit = ["Edit", "MultiEdit", "apply_patch"].includes(
+      activity.toolName || activity.label.split(" ")[0],
+    );
+    if (isEdit) {
+      return (
+        <div className="activity-detail edit-files-detail">
+          <EditFilesDiff detail={activity.detail || ""} />
+          {activity.output != null ? (
+            <div className="tool-io">
+              <section className={activity.isError ? "io-error" : ""}>
+                <b>OUT</b>
+                <pre>{activity.output || "(no output)"}</pre>
+              </section>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
     return (
       <div className="activity-detail tool-io">
         <section>
           <b>IN</b>
-          <pre>{formatActivityInput(activity)}</pre>
+          <pre>{input}</pre>
         </section>
         {activity.output != null && (
           <section className={activity.isError ? "io-error" : ""}>
@@ -5790,6 +5899,11 @@ function activityDisplayLabel(activity: Activity) {
 }
 
 function activityDisplayTitle(activity: Activity) {
+  if (activity.kind === "tool" && isWebSearch(activity))
+    return {
+      keyword: "WebSearch",
+      description: webSearchPresentation(activity).description,
+    };
   const label = activityDisplayLabel(activity);
   if (activity.kind !== "tool") return { keyword: label, description: "" };
   const rawName = activity.toolName || activity.label.split(" ")[0];

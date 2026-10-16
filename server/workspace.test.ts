@@ -18,6 +18,9 @@ test("workspace listing includes sibling projects and ignores dependency caches"
       recursive: true,
     });
     fs.mkdirSync(path.join(workspace, "project-b"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "project-b", ".codex", "skills"), {
+      recursive: true,
+    });
     for (let index = 0; index < 20; index += 1)
       fs.writeFileSync(
         path.join(workspace, "project-a", ".venv", `${index}.py`),
@@ -25,6 +28,10 @@ test("workspace listing includes sibling projects and ignores dependency caches"
       );
     fs.writeFileSync(path.join(workspace, "project-a", "a.ts"), "a");
     fs.writeFileSync(path.join(workspace, "project-b", "b.ts"), "b");
+    fs.writeFileSync(
+      path.join(workspace, "project-b", ".codex", "skills", "hidden.md"),
+      "hidden",
+    );
 
     const result = listWorkspaceEntries(workspace, 10);
     assert.deepEqual(
@@ -32,7 +39,23 @@ test("workspace listing includes sibling projects and ignores dependency caches"
       ["project-a/a.ts", "project-b/b.ts"],
     );
     assert.deepEqual(result.directories, ["project-a", "project-b"]);
+    assert.equal(
+      result.files.some((file) => file.path.includes("/.codex/")),
+      false,
+    );
     assert.equal(result.truncated, false);
+    const initialVersion = result.version;
+    fs.writeFileSync(path.join(workspace, "project-a", "a.ts"), "z");
+    const changedTime = new Date(Date.now() + 2_000);
+    fs.utimesSync(
+      path.join(workspace, "project-a", "a.ts"),
+      changedTime,
+      changedTime,
+    );
+    assert.notEqual(
+      listWorkspaceEntries(workspace, 10).version,
+      initialVersion,
+    );
   } finally {
     fs.rmSync(workspace, { recursive: true });
   }

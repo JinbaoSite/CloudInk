@@ -48,6 +48,11 @@ CloudInk 是一个基于 React、Express、SQLite、Claude Code CLI 和 Codex CL
 
 - NDJSON 实时流式回复，可随时强制中止并保留已生成内容。
 - Claude Code 或 Codex 在工具调用前输出的过程说明会直接打印在对应工具之前；Thinking、WebSearch、Read、Write、Edit、Bash、Skill 和工具结果按真实执行顺序展示。
+- Codex 的多次进度说明分别保存和展示；即使中间只有等待或轮询，也不会合并进同一条说明或最终回答。
+- Codex 的 Edit Files 在 IN 中展示文件变更列表，保留文件路径、操作类型及事件提供的其他变更信息。
+- Edit Files 使用 GitHub 风格的差异视图：多个文件分别折叠、展示路径、变更类型和增删统计。新增行使用绿色背景，删除行使用红色背景；`@@` 显示为蓝色变更区块，有原始行号时显示新旧行号，没有行号时不补造。支持查看原始内容。
+- Bash/Edit 内部内容滚动到顶部或底部后，继续滚动会带动外层聊天区域。
+- WebSearch 标题统一显示工具名和搜索词，展开后单独展示搜索内容及实际返回内容；兼容旧 Codex 将搜索词存入 OUT 的记录，避免重复标题和空对象输入。
 - 工具卡片直接显示文件路径或 Bash description，详情中展示折叠的 `IN` / `OUT`。
 - 工具调用轮文本自动归入 Thinking，只有最终回答保存为助手正文。
 - Claude 需要确认时，在输入框上方显示 Submit answer 面板。
@@ -60,6 +65,7 @@ CloudInk 是一个基于 React、Express、SQLite、Claude Code CLI 和 Codex CL
 - Markdown、GFM、自动语言识别的代码语法高亮和 MathJax 数学公式渲染。
 - `Auto`、`Plan`、`Manual`、`Edit automatically` 四种执行模式。
 - 输入框底部可切换 Claude Code / Codex 及各自真实配置的模型；Claude 模型来自 CLI 初始化信息，Codex 模型来自 `models_cache.json`、`config.toml` 或服务端配置。
+- Codex 的 Auto / Accept Edits 使用 `cloudink_workspace` 权限配置，允许读写当前用户工作区及项目内的 `.git`，支持暂存、提交等 Git 操作；Plan / Manual 继续只读。该配置继承 `:workspace` 的其他保护，网络访问沿用 `config.toml` 中的 `sandbox_workspace_write.network_access`。需要支持权限配置继承的 Codex CLI（当前验证版本 0.161.0）；不要在全局配置中另外设置 `sandbox_mode`，以免覆盖此权限配置。
 - `/` 菜单按当前后端动态读取 CLI、用户配置、插件和工作区中的 Commands/Skills 及真实 description。
 - `@` 搜索并引用当前用户工作区文件。
 - `/` 和 `@` 候选菜单支持方向键上下循环选择、`Enter` 确认及 `Esc` 关闭，当前项会自动滚动到可见区域。
@@ -280,6 +286,16 @@ npm run build
 ```
 
 涉及 UI 时还应分别使用桌面视口和约 `390 × 844` 的手机视口验证登录、会话切换、消息发送、侧栏/抽屉和输入框。
+
+历史 Codex Edit Files 若显示 `[object Object]`，可用本地日志修复工具。默认仅扫描；实际写入会先备份数据库和受影响记录，再按会话、工具执行时间及文件数量匹配原始补丁：
+
+```bash
+python3 scripts/repair_edit_history.py --db data/app.db --logs ~/.codex/sessions
+python3 scripts/repair_edit_history.py --db data/app.db --logs ~/.codex/sessions --apply --backup-dir ~/.codex/backups
+python3 -m unittest discover -s scripts -p 'test_repair_edit_history.py'
+```
+
+修复工具不会执行日志中的代码；动态补丁未记录最终内容时仅恢复文件列表，不推测历史差异。已修复的记录再次扫描不会重复修改。
 
 ## 安全边界
 

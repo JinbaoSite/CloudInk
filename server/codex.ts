@@ -144,26 +144,41 @@ export function textFromCodexEvent(event: CodexEvent) {
 /**
  * Codex emits completed agent messages both for progress narration before a
  * tool call and for the final answer. The distinction is only known when the
- * next event arrives, so keep the latest agent text pending until either a
- * tool starts or the turn completes.
+ * next event arrives, so keep only the latest agent message pending. A later
+ * agent message also establishes a boundary, even when intervening wait or
+ * polling tools are not represented as activities by the CLI.
  */
 export function createCodexAnswerTracker() {
   let answer = "";
   let committedAnswer = "";
   let pendingText = "";
 
+  function flushNarration() {
+    if (!pendingText.trim()) return null;
+    const narration = pendingText;
+    answer = committedAnswer;
+    pendingText = "";
+    return { answer, narration };
+  }
+
   return {
+    beforeEvent(event: CodexEvent) {
+      if (
+        textFromCodexEvent(event) ||
+        activitiesFromCodexEvent(event).some(
+          (activity) => activity.kind === "tool",
+        )
+      )
+        return flushNarration();
+      return null;
+    },
     append(text: string) {
       answer += text;
       pendingText += text;
       return answer;
     },
     beforeTool() {
-      if (!pendingText.trim()) return null;
-      const narration = pendingText;
-      answer = committedAnswer;
-      pendingText = "";
-      return { answer, narration };
+      return flushNarration();
     },
     completeTurn() {
       committedAnswer = answer;
@@ -260,7 +275,14 @@ export function activitiesFromCodexEvent(event: CodexEvent): CodexActivity[] {
       {
         kind: "tool",
         label: `Edit${item.path ? ` ${short(item.path)}` : " files"}`,
-        detail: String(item.path || item.changes || "文件已修改"),
+        detail:
+          item.changes != null
+            ? JSON.stringify(
+                { path: item.path, changes: item.changes },
+                null,
+                2,
+              )
+            : String(item.path || "文件已修改"),
         toolUseId: id,
         toolName: "Edit",
       },
@@ -341,20 +363,46 @@ export function codexThreadIdFromEvent(event: CodexEvent) {
 export function codexSandboxConfig(
   permissionMode: "auto" | "plan" | "manual" | "acceptEdits",
   writableRoot?: string,
+  networkAccess = false,
 ) {
   const mode =
     permissionMode === "plan" || permissionMode === "manual"
       ? "read-only"
       : "workspace-write";
-  const args = ["-c", `sandbox_mode=${JSON.stringify(mode)}`];
-  if (mode === "workspace-write" && writableRoot)
-    args.push(
-      "-c",
-      `sandbox_workspace_write.writable_roots=${JSON.stringify([
-        writableRoot,
-      ])}`,
-    );
+  if (mode === "read-only")
+    return { mode, args: ["-c", 'sandbox_mode="read-only"'] };
+  // Override only Git metadata protection. Keep the inherited .agents/.codex/
+  // .aws protections and scope additional workspace roots to this user.
+  const profile = `extends=":workspace",filesystem={":workspace_roots"={".git"="write"}},network={enabled=${networkAccess}}${
+    writableRoot
+      ? `,workspace_roots={${JSON.stringify(writableRoot)}=true}`
+      : ""
+  }`;
+  const args = [
+    "-c",
+    'default_permissions="cloudink_workspace"',
+    "-c",
+    `permissions.cloudink_workspace={${profile}}`,
+  ];
   return { mode, args };
+}
+
+function codexWorkspaceNetworkAccess() {
+  try {
+    const config = fs.readFileSync(
+      path.join(
+        process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+        "config.toml",
+      ),
+      "utf8",
+    );
+    const section = config.match(
+      /^\s*\[sandbox_workspace_write\][^\S\n]*(?:#.*)?\n([\s\S]*?)(?=^\s*\[|$(?![\s\S]))/m,
+    )?.[1];
+    return /^\s*network_access\s*=\s*true\s*(?:#.*)?$/m.test(section || "");
+  } catch {
+    return false;
+  }
 }
 
 export function runCodex(opts: {
@@ -373,19 +421,14 @@ export function runCodex(opts: {
       ? opts.model
       : process.env.CODEX_MODEL;
   if (model) shared.push("--model", model);
-  const sandbox = codexSandboxConfig(opts.permissionMode, opts.writableRoot);
+  const sandbox = codexSandboxConfig(
+    opts.permissionMode,
+    opts.writableRoot,
+    codexWorkspaceNetworkAccess(),
+  );
   const args = opts.threadId
     ? ["exec", "resume", ...shared, ...sandbox.args, opts.threadId, prompt]
-    : [
-        "exec",
-        ...shared,
-        "--sandbox",
-        sandbox.mode,
-        ...sandbox.args.slice(2),
-        "--cd",
-        opts.cwd,
-        prompt,
-      ];
+    : ["exec", ...shared, ...sandbox.args, "--cd", opts.cwd, prompt];
   const child = spawn(process.env.CODEX_CLI_PATH || "codex", args, {
     cwd: opts.cwd,
     env: process.env,

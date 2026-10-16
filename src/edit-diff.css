@@ -1,0 +1,264 @@
+.edit-files-view {
+  min-width: 0;
+  margin: 4px 0 12px;
+  color: #1f2328;
+  font-size: 12px;
+}
+.edit-files-overview,
+.edit-files-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.edit-files-overview {
+  justify-content: space-between;
+  padding: 8px 2px;
+  color: #656d76;
+  font-size: 11px;
+}
+.edit-files-stats {
+  flex-shrink: 0;
+  gap: 7px;
+  font:
+    600 11px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.edit-count-added {
+  color: #1a7f37;
+}
+.edit-count-removed {
+  color: #cf222e;
+}
+.edit-file {
+  min-width: 0;
+  margin-bottom: 10px;
+  overflow: hidden;
+  border: 1px solid #d0d7de;
+  border-radius: 7px;
+  background: #fff;
+}
+.activity-card .edit-file > .edit-file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 39px;
+  padding: 9px 12px;
+  background: #f6f8fa;
+  color: #57606a;
+  list-style: none;
+  cursor: pointer;
+}
+.edit-file[open] > .edit-file-header {
+  border-bottom: 1px solid #d0d7de;
+}
+.edit-file-header::-webkit-details-marker {
+  display: none;
+}
+.edit-file-header > svg {
+  flex-shrink: 0;
+}
+.edit-file-chevron {
+  transform: rotate(-90deg);
+}
+.edit-file[open] > .edit-file-header .edit-file-chevron {
+  transform: rotate(0);
+}
+.edit-file-path {
+  min-width: 0;
+  flex: 1;
+  color: #1f2328;
+  font:
+    600 11px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.edit-file-previous {
+  color: #656d76;
+  font-weight: 400;
+}
+.edit-file-status {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: 1px solid #d0d7de;
+  border-radius: 20px;
+  color: #656d76;
+  font-size: 10px;
+  line-height: 18px;
+}
+.edit-file-status.status-added {
+  border-color: #aceebb;
+  color: #1a7f37;
+  background: #dafbe1;
+}
+.edit-file-status.status-deleted {
+  border-color: #ffcecb;
+  color: #cf222e;
+  background: #ffebe9;
+}
+.edit-file-code {
+  max-height: 420px;
+  overflow: auto;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+  font:
+    11px/1.65 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  tab-size: 4;
+}
+.edit-code-line {
+  display: grid;
+  grid-template-columns: 35px 35px 23px minmax(0, 1fr);
+  min-height: 19px;
+}
+.edit-line-number {
+  padding: 0 5px;
+  border-right: 1px solid #d8dee466;
+  color: #8c959f;
+  text-align: right;
+  user-select: none;
+}
+.edit-line-sign {
+  text-align: center;
+  user-select: none;
+}
+.edit-code-line > code {
+  min-width: 0;
+  padding: 0 12px 0 0;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.edit-code-added {
+  background: #dafbe1;
+}
+.edit-code-added .edit-line-number {
+  background: #aceebb66;
+  color: #1a7f37;
+}
+.edit-code-added .edit-line-sign {
+  color: #1a7f37;
+}
+.edit-code-removed {
+  background: #ffebe9;
+}
+.edit-code-removed .edit-line-number {
+  background: #ffcecb66;
+  color: #cf222e;
+}
+.edit-code-removed .edit-line-sign {
+  color: #cf222e;
+}
+.edit-code-note {
+  color: #656d76;
+  font-style: italic;
+}
+.edit-hunk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 6px 12px;
+  border-top: 1px solid #d8e7f5;
+  border-bottom: 1px solid #d8e7f5;
+  background: #ddf4ff;
+  color: #0969da;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.edit-hunk-range {
+  color: #57606a;
+}
+.edit-hunk code {
+  color: #57606a;
+  font: inherit;
+  white-space: pre-wrap;
+}
+.edit-file-empty {
+  margin: 0;
+  padding: 15px 12px;
+  color: #656d76;
+  font-size: 11px;
+}
+.activity-card .edit-files-source > summary {
+  display: block;
+  min-height: auto;
+  padding: 3px 0;
+  color: #656d76;
+  font-size: 10px;
+  cursor: pointer;
+}
+.activity-card .edit-files-source pre,
+.activity-card pre.edit-files-fallback {
+  margin: 6px 0;
+  background: #f6f8fa;
+  color: #1f2328;
+}
+.edit-file-code,
+.edit-files-source pre,
+.edit-files-fallback {
+  scrollbar-width: thin;
+  scrollbar-color: #c9cdd1 transparent;
+}
+.edit-file-code::-webkit-scrollbar,
+.edit-files-source pre::-webkit-scrollbar,
+.edit-files-fallback::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.edit-file-code::-webkit-scrollbar-track,
+.edit-files-source pre::-webkit-scrollbar-track,
+.edit-files-fallback::-webkit-scrollbar-track {
+  background: transparent;
+}
+.edit-file-code::-webkit-scrollbar-thumb,
+.edit-files-source pre::-webkit-scrollbar-thumb,
+.edit-files-fallback::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c9cdd1;
+}
+.edit-file-code:hover,
+.edit-files-source pre:hover,
+.edit-files-fallback:hover {
+  scrollbar-color: #a8afb7 transparent;
+}
+.edit-file-code::-webkit-scrollbar-thumb:hover,
+.edit-files-source pre::-webkit-scrollbar-thumb:hover,
+.edit-files-fallback::-webkit-scrollbar-thumb:hover {
+  background: #a8afb7;
+}
+.edit-file-header:focus-visible,
+.edit-file-code:focus-visible,
+.edit-files-source > summary:focus-visible {
+  outline: 2px solid #0969da;
+  outline-offset: -2px;
+}
+@media (max-width: 700px) {
+  .activity-card .edit-file > .edit-file-header {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+  }
+  .edit-file-path {
+    flex-basis: calc(100% - 52px);
+  }
+  .edit-file-status {
+    margin-left: 36px;
+  }
+  .edit-file-header .edit-files-stats {
+    margin-left: auto;
+  }
+  .edit-code-line {
+    grid-template-columns: 27px 27px 18px minmax(0, 1fr);
+  }
+  .edit-hunk {
+    padding: 6px 8px;
+  }
+}

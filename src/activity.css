@@ -40,6 +40,10 @@
   line-height: 1;
   transition: transform 0.15s ease;
 }
+.activity-card.tool > summary > small {
+  margin-left: 0;
+  flex-shrink: 0;
+}
 .activity-label {
   display: flex;
   align-items: baseline;
@@ -314,6 +318,7 @@
   margin: 0;
   padding: 10px 12px;
   overflow: auto;
+  overscroll-behavior-y: auto;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -330,6 +335,75 @@
 .tool-io .io-error > b,
 .tool-io .io-error > pre {
   color: #a24b3d;
+}
+
+.tool-io section > pre {
+  scrollbar-width: thin;
+  scrollbar-color: #c9cdd1 transparent;
+}
+.tool-io section > pre::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.tool-io section > pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tool-io section > pre::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c9cdd1;
+}
+.tool-io section > pre:hover {
+  scrollbar-color: #a8afb7 transparent;
+}
+.tool-io section > pre::-webkit-scrollbar-thumb:hover {
+  background: #a8afb7;
+}
+
+.web-search-detail {
+  min-width: 0;
+  margin-top: 4px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  background: #f6f8fa;
+}
+.web-search-query {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 12px;
+}
+.web-search-query > svg {
+  margin-top: 3px;
+  flex-shrink: 0;
+  color: #656d76;
+}
+.web-search-query > div {
+  min-width: 0;
+}
+.web-search-query span {
+  color: #656d76;
+  font-size: 10px;
+}
+.web-search-query p {
+  margin: 3px 0 0;
+  color: #1f2328;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.web-search-detail > .tool-io {
+  border: 0;
+  border-top: 1px solid #d0d7de;
+  border-radius: 0;
+}
+.web-search-empty {
+  margin: 0;
+  padding: 11px 12px;
+  color: #656d76;
+  font-size: 12px;
 }
 
 .conversation-live-status {

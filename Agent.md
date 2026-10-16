@@ -15,6 +15,8 @@
 - `src/MarkdownMessage.tsx`：Markdown、GFM、延迟数学公式渲染和消息级错误边界。
 - `src/workspace-links.ts`：聊天内容中的工作区文件链接识别与安全归一化。
 - `src/message-order.ts`：历史 activity 的同批次顺序兼容处理。
+- `src/EditFilesDiff.tsx`、`src/edit-diff.ts`、`src/edit-diff.css`：Edit Files 多文件差异解析与展示，支持 apply_patch、unified diff 和结构化 Edit 输入。
+- `src/web-search.ts`：统一 WebSearch 的查询和返回内容展示，兼容历史 Codex 的 Web Search 标签与查询输出，错误结果不得被当成查询隐藏。
 - `src/ScheduledTasks.tsx`：定时任务列表、编辑、执行记录与删除确认 UI。
 - `src/WorkspaceEditor.tsx`：多标签文件编辑、Markdown/HTML 预览和保存状态。
 - `src/styles.css`：应用框架、侧栏、顶部导航和 `700px` 移动端断点。
@@ -30,6 +32,7 @@
 - `server/scheduler.ts`：Cron 解析、任务入队、并发限制和执行记录。
 - `server/slash.ts`：按 Claude/Codex 后端发现 Commands、Skills 和 description。
 - `server/ui-mcp.mjs`：把 Claude 的结构化提问及定时任务工具桥接到 Web UI。
+- `scripts/repair_edit_history.py`：离线修复历史 Codex Edit Files 的对象字符串；默认只读，写入前备份，按会话、工具执行区间和文件数量唯一匹配，不执行日志代码或推测动态补丁内容。
 - `vite.config.ts`：读取 `WEB_PORT` 和 `PORT`，配置 Web UI 端口及 API 代理。
 
 ## 必须保持的约束
@@ -68,6 +71,9 @@
 - `thinking_delta` 必须实时合并到同一条 Thinking activity 并持续更新，而不是等完整 assistant 事件后才显示或为每个 delta 新建消息。
 - Claude 在工具调用前输出的普通 text narration 和子 Agent 文本必须使用独立 `narration` activity，像助手过程文字一样直接打印；不得归类为 Thinking，也不得拼入最终正文。Thinking、Read、Bash 等活动卡片继续默认折叠。
 - narration 只能在同一事件批次内移动到对应工具之前，不能跨过更早批次的 WebSearch 或其他工具。Codex 的“说明 → 工具 → 说明 → 工具”必须保持数据库 rowid 的真实时间顺序；修改时覆盖 `message-order.test.ts`。
+- Codex 每个完整 agent_message 都是独立消息边界；下一条消息到达时，必须先将上一条待定文本保存为独立 narration，即使中间的等待或轮询未映射为工具 activity，也不得拼接多条消息。终止轮的最后一条文本保留为最终正文。
+- Codex file_change 的 changes 是结构化变更列表，必须序列化为 JSON 保存到 Edit 的 IN，保留路径、操作类型和事件提供的其他字段；不得使用 String() 转换对象数组。
+- 编辑工具使用独立的多文件差异视图，逐文件显示折叠标题、变更类型和增删统计；新增行用绿色背景、删除行用红色背景。`@@` 解析为区块标题，标准 unified diff 按真实行号递增，apply_patch 无行号区块不得补造行号。文件头不渲染为代码；区块内的 `+++` / `---` 仍可能是正常代码变更，必须按补丁结构识别。保留原始内容入口，无逐行差异时明确说明。
 - 带 `parent_tool_use_id` 的子 Agent `text_delta` 不能拼入最终助手正文；子 Agent 的完整 text block 必须作为可渲染 Markdown 的 Agent activity 展示和持久化。
 - `question` 事件必须在输入框上方呈现 Submit answer 面板；提交答案后要继续同一个 Web 会话。
 - 助手正文末尾保留复制、重试、耗时和 Token 统计控件；重试应复用对应的用户问题，而不是复制助手答案。
@@ -76,6 +82,7 @@
 - 浏览器刷新或断开流不得中止后台 CLI。页面重新进入会话后必须通过 `/api/sessions/:id/run` 恢复 Working、停止按钮和增量消息轮询。部署前必须检查活动任务；不得为了纯前端静态资源更新重启服务并中断长任务。
 - 新消息发送后必须定位到最新内容；流式 `delta` 和 `activity` 到达时持续跟随底部。
 - 用户主动上滚时应暂停自动跟随，回到底部附近后恢复。
+- Bash/Edit 的内部滚动区域到达顶部或底部后，应允许纵向滚动继续传递给外层聊天区域，不得使用 overscroll-behavior-y: contain 阻断；外层聊天区域自身仍可阻止滚动传递到页面。
 - `.messages` 只允许纵向滚动；长链接、代码、表格、图片和工具内容必须在自身边界内换行或局部滚动，不得让整个对话区域出现横向滚动条。
 - 流式阶段不得调用 MathJax 修改 React DOM；回答完成后才能统一执行公式排版。
 - Markdown 围栏代码块使用 `rehype-highlight` 高亮：优先采用代码围栏声明的语言，未声明时自动检测，未知语言安全回退为普通代码；行内代码不得套用块级高亮样式。
@@ -103,6 +110,7 @@
 - 探测必须禁用工具和会话持久化，并设置超时与 `CLI default` 回退。
 - 正式聊天返回 `model` 事件时，前端仍应更新显示，以反映 fallback 或运行时模型变化。
 - Codex 可用性探测必须异步、只缓存一次且设置超时，禁止用同步子进程阻塞 `/api/config` 或其他请求。
+- Codex Auto / Accept Edits 必须在新建和 resume 时一致传递 `default_permissions="cloudink_workspace"` 及该次用户范围的权限表：继承 `:workspace`，只将 `.git` 覆盖为 `write`，workspace_roots 只加入当前用户根工作区。不得改成 danger-full-access，不得开放其他用户目录或 `.codex` / `.agents` / `.aws`。Plan / Manual 保持旧版 read-only 配置；写模式不得混用 `--sandbox` / `sandbox_mode`，网络设置沿用既有 sandbox_workspace_write.network_access。
 
 ### 响应式布局
 

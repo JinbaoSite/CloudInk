@@ -1036,7 +1036,12 @@ app.get("/api/workspace/files", requireAuth, (req, res) => {
   // execution, attachments, and slash discovery, never to this file tree.
   const workspace = projectWorkspaceFor(uid);
   if (!workspace) return res.status(404).json({ error: "用户不存在" });
-  res.json(listWorkspaceEntries(workspace));
+  const listing = listWorkspaceEntries(workspace);
+  const knownVersion =
+    typeof req.query.version === "string" ? req.query.version : "";
+  if (knownVersion && knownVersion === listing.version)
+    return res.json({ changed: false, version: listing.version });
+  return res.json({ ...listing, changed: true });
 });
 function userWorkspace(req: express.Request) {
   const uid = (req as AuthedRequest).userId;
@@ -1847,13 +1852,9 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
             previousCodexMetrics,
           );
         const text = textFromCodexEvent(event);
-        if (text) {
-          answerTracker.append(text);
-          sendEvent({ type: "delta", text });
-        }
         const activities = activitiesFromCodexEvent(event);
-        if (activities.some((activity) => activity.kind === "tool")) {
-          const pending = answerTracker.beforeTool();
+        {
+          const pending = answerTracker.beforeEvent(event);
           if (pending) {
             sendEvent({ type: "replace_answer", text: pending.answer });
             const narration = {
@@ -1871,6 +1872,10 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
             );
             sendEvent({ type: "activity", activity: narration });
           }
+        }
+        if (text) {
+          answerTracker.append(text);
+          sendEvent({ type: "delta", text });
         }
         for (const activity of activities) {
           const previous = activity.toolUseId

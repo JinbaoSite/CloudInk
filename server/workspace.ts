@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 export const MAX_EDITABLE_FILE_SIZE = 5 * 1024 * 1024;
 export const MAX_WORKSPACE_FILES = 2000;
@@ -21,11 +22,20 @@ const IGNORED_WORKSPACE_DIRECTORIES = new Set([
   "build",
 ]);
 
+function shouldIgnoreWorkspaceDirectory(name: string) {
+  return name.startsWith(".") || IGNORED_WORKSPACE_DIRECTORIES.has(name);
+}
+
 export function listWorkspaceEntries(
   workspace: string,
   maxFiles = MAX_WORKSPACE_FILES,
 ) {
-  const files: Array<{ name: string; path: string; size: number }> = [];
+  const files: Array<{
+    name: string;
+    path: string;
+    size: number;
+    modifiedAt: number;
+  }> = [];
   const directories: string[] = [];
   const pending = [workspace];
   let pendingIndex = 0;
@@ -43,7 +53,7 @@ export function listWorkspaceEntries(
       if (files.length >= maxFiles || entry.isSymbolicLink()) continue;
       const absolutePath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (!IGNORED_WORKSPACE_DIRECTORIES.has(entry.name)) {
+        if (!shouldIgnoreWorkspaceDirectory(entry.name)) {
           directories.push(
             path.relative(workspace, absolutePath).split(path.sep).join("/"),
           );
@@ -53,22 +63,34 @@ export function listWorkspaceEntries(
       }
       if (!entry.isFile()) continue;
       try {
+        const stat = fs.statSync(absolutePath);
         files.push({
           name: entry.name,
           path: path
             .relative(workspace, absolutePath)
             .split(path.sep)
             .join("/"),
-          size: fs.statSync(absolutePath).size,
+          size: stat.size,
+          modifiedAt: Math.trunc(stat.mtimeMs),
         });
       } catch {}
     }
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
   directories.sort((a, b) => a.localeCompare(b));
+  const version = crypto
+    .createHash("sha1")
+    .update(
+      JSON.stringify({
+        directories,
+        files: files.map((file) => [file.path, file.size, file.modifiedAt]),
+      }),
+    )
+    .digest("base64url");
   return {
     files,
     directories,
+    version,
     truncated: files.length >= maxFiles && pendingIndex < pending.length,
   };
 }
