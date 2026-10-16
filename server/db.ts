@@ -86,6 +86,9 @@ if (!sessionColumns.some((column) => column.name === "backend")) {
 if (!sessionColumns.some((column) => column.name === "codex_thread_id")) {
   db.exec("ALTER TABLE sessions ADD COLUMN codex_thread_id TEXT");
 }
+if (!sessionColumns.some((column) => column.name === "pending_question")) {
+  db.exec("ALTER TABLE sessions ADD COLUMN pending_question TEXT");
+}
 if (!sessionColumns.some((column) => column.name === "project_id")) {
   db.exec("ALTER TABLE sessions ADD COLUMN project_id TEXT");
 }

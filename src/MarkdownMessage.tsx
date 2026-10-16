@@ -107,7 +107,11 @@ function RenderedMarkdown({
             />
           ),
           a: ({ href, children: content, ...props }) => {
-            const path = resolveWorkspaceLink(href, workspacePaths);
+            const path = resolveWorkspaceLink(
+              href,
+              workspacePaths,
+              markdownPath,
+            );
             if (!path || !onOpenWorkspaceFile)
               return (
                 <a href={href} {...props}>

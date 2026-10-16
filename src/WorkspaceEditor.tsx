@@ -13,6 +13,8 @@ export type OpenWorkspaceFile = {
   size: number;
   content: string;
   savedContent: string;
+  version?: string;
+  externalChange?: boolean;
   loading?: boolean;
   error?: string;
 };
@@ -26,6 +28,9 @@ type WorkspaceEditorProps = {
   onSave: (path: string) => void;
   onClose: (path: string) => void;
   onOpenSidebar: () => void;
+  workspacePaths: string[];
+  onOpenFile: (path: string) => void;
+  onReload: (path: string) => void;
 };
 
 async function languageForFile(filePath: string): Promise<Extension[]> {
@@ -79,9 +84,9 @@ function isHtmlFile(filePath: string) {
   return /\.html?$/i.test(filePath);
 }
 
-function htmlPreviewDocument(content: string, filePath: string) {
+function htmlPreviewDocument(content: string, filePath: string, token: string) {
   const directory = filePath.split("/").slice(0, -1).map(encodeURIComponent);
-  const previewBase = `${window.location.origin}${BASE_PATH}/api/workspace/preview/${directory.length ? `${directory.join("/")}/` : ""}`;
+  const previewBase = `${window.location.origin}${BASE_PATH}/api/workspace/preview-session/${token}/${directory.length ? `${directory.join("/")}/` : ""}`;
   const base = `<base href="${previewBase}">`;
   return /<head(?:\s[^>]*)?>/i.test(content)
     ? content.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${base}`)
@@ -97,6 +102,9 @@ export default function WorkspaceEditor({
   onSave,
   onClose,
   onOpenSidebar,
+  workspacePaths,
+  onOpenFile,
+  onReload,
 }: WorkspaceEditorProps) {
   const activeFile = files.find((file) => file.path === activePath) || files[0];
   const activeRef = useRef(activeFile);
@@ -105,6 +113,47 @@ export default function WorkspaceEditor({
   const [fileViews, setFileViews] = useState<
     Record<string, "preview" | "edit">
   >({});
+  const htmlPath =
+    activeFile && isHtmlFile(activeFile.path) ? activeFile.path : "";
+  const [previewSession, setPreviewSession] = useState<{
+    path: string;
+    token: string;
+    error?: string;
+  }>();
+  useEffect(() => {
+    if (!htmlPath) return;
+    const abort = new AbortController();
+    const renew = async () => {
+      try {
+        const response = await fetch(
+          `${BASE_PATH}/api/workspace/preview-session`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: htmlPath }),
+            signal: abort.signal,
+          },
+        );
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "无法加载预览资源");
+        if (!abort.signal.aborted)
+          setPreviewSession({ path: htmlPath, token: result.token });
+      } catch (error) {
+        if (!abort.signal.aborted)
+          setPreviewSession({
+            path: htmlPath,
+            token: "",
+            error: (error as Error).message,
+          });
+      }
+    };
+    void renew();
+    const timer = window.setInterval(() => void renew(), 4 * 60_000);
+    return () => {
+      abort.abort();
+      window.clearInterval(timer);
+    };
+  }, [htmlPath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,6 +234,16 @@ export default function WorkspaceEditor({
           );
         })}
       </div>
+      {activeFile.externalChange && (
+        <div className="workspace-file-conflict" role="status">
+          <span>
+            文件已在外部修改或删除，本地内容已保留。请重新读取后再保存。
+          </span>
+          <button type="button" onClick={() => onReload(activeFile.path)}>
+            重新读取文件
+          </button>
+        </div>
+      )}
       <div
         className={`workspace-editor-body${(markdown || html) && !activeFile.loading && !activeFile.error ? " previewable-file" : ""}${image && !activeFile.loading && !activeFile.error ? " image-file" : ""}`}
       >
@@ -228,7 +287,11 @@ export default function WorkspaceEditor({
                 aria-label={`预览 ${activeFile.path}`}
               >
                 {activeFile.content ? (
-                  <MarkdownMessage markdownPath={activeFile.path}>
+                  <MarkdownMessage
+                    markdownPath={activeFile.path}
+                    workspacePaths={workspacePaths}
+                    onOpenWorkspaceFile={onOpenFile}
+                  >
                     {activeFile.content}
                   </MarkdownMessage>
                 ) : (
@@ -238,15 +301,27 @@ export default function WorkspaceEditor({
                 )}
               </article>
             ) : html && fileView === "preview" ? (
-              <iframe
-                className="workspace-html-preview"
-                title={`预览 ${activeFile.path}`}
-                sandbox="allow-scripts"
-                srcDoc={htmlPreviewDocument(
-                  activeFile.content,
-                  activeFile.path,
-                )}
-              />
+              previewSession?.path !== activeFile.path ||
+              !previewSession.token ? (
+                <div className="workspace-editor-message">
+                  {previewSession?.path === activeFile.path &&
+                  previewSession.error
+                    ? previewSession.error
+                    : "正在加载预览…"}
+                </div>
+              ) : (
+                <iframe
+                  className="workspace-html-preview"
+                  title={`预览 ${activeFile.path}`}
+                  sandbox="allow-scripts"
+                  referrerPolicy="no-referrer"
+                  srcDoc={htmlPreviewDocument(
+                    activeFile.content,
+                    activeFile.path,
+                    previewSession.token,
+                  )}
+                />
+              )
             ) : image ? (
               <div className="workspace-image-preview">
                 <img
@@ -281,7 +356,12 @@ export default function WorkspaceEditor({
         <span title={activeFile.path}>{activeFile.path}</span>
         <button
           type="button"
-          disabled={activeFile.loading || Boolean(activeFile.error) || !dirty}
+          disabled={
+            activeFile.loading ||
+            Boolean(activeFile.error) ||
+            !dirty ||
+            savingPath === activeFile.path
+          }
           onClick={() => onSave(activeFile.path)}
         >
           <Save aria-hidden="true" />

@@ -41,7 +41,7 @@ export function listWorkspaceEntries(
   let pendingIndex = 0;
   // Breadth-first traversal prevents one large project from consuming the
   // whole response before sibling project directories have been discovered.
-  while (pendingIndex < pending.length && files.length < maxFiles) {
+  while (pendingIndex < pending.length && files.length <= maxFiles) {
     const directory = pending[pendingIndex++];
     let entries: fs.Dirent[];
     try {
@@ -50,7 +50,8 @@ export function listWorkspaceEntries(
       continue;
     }
     for (const entry of entries) {
-      if (files.length >= maxFiles || entry.isSymbolicLink()) continue;
+      if (files.length > maxFiles) break;
+      if (entry.isSymbolicLink()) continue;
       const absolutePath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         if (!shouldIgnoreWorkspaceDirectory(entry.name)) {
@@ -76,12 +77,15 @@ export function listWorkspaceEntries(
       } catch {}
     }
   }
+  const truncated = files.length > maxFiles;
+  files.splice(maxFiles);
   files.sort((a, b) => a.path.localeCompare(b.path));
   directories.sort((a, b) => a.localeCompare(b));
   const version = crypto
     .createHash("sha1")
     .update(
       JSON.stringify({
+        truncated,
         directories,
         files: files.map((file) => [file.path, file.size, file.modifiedAt]),
       }),
@@ -91,7 +95,7 @@ export function listWorkspaceEntries(
     files,
     directories,
     version,
-    truncated: files.length >= maxFiles && pendingIndex < pending.length,
+    truncated,
   };
 }
 
@@ -119,6 +123,30 @@ export function resolveWorkspaceTarget(
   if (relative.startsWith("..") || path.isAbsolute(relative))
     throw new Error("文件路径无效");
   return target;
+}
+
+// Validate existing sources as well as destinations. A regular file can still
+// escape through a symlink in one of its parent directories.
+export function resolveWorkspaceEntry(
+  workspace: string,
+  requestedPath: string,
+) {
+  const target = resolveWorkspaceFile(workspace, requestedPath);
+  if (fs.lstatSync(target).isSymbolicLink()) throw new Error("不支持符号链接");
+  const realPath = fs.realpathSync(target);
+  const relative = path.relative(fs.realpathSync(workspace), realPath);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error("文件路径无效");
+  return realPath;
+}
+
+export function editableFileVersion(content: string | Buffer) {
+  return crypto.createHash("sha256").update(content).digest("hex");
 }
 
 export function resolveWorkspaceDirectory(
@@ -161,5 +189,10 @@ export function readEditableFile(workspace: string, requestedPath: string) {
     throw new Error("在线编辑仅支持 5MB 以内的文件");
   const buffer = fs.readFileSync(absolutePath);
   if (buffer.includes(0)) throw new Error("二进制文件不支持在线编辑");
-  return { absolutePath: realFile, stat, content: buffer.toString("utf8") };
+  return {
+    absolutePath: realFile,
+    stat,
+    content: buffer.toString("utf8"),
+    version: editableFileVersion(buffer),
+  };
 }

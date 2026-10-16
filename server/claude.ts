@@ -303,6 +303,7 @@ export function runClaude(opts: {
   opts.signal.addEventListener("abort", () => child.kill("SIGTERM"), {
     once: true,
   });
+  if (opts.signal.aborted) child.kill("SIGTERM");
   return child;
 }
 export function textFromEvent(event: ClaudeEvent) {

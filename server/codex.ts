@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export type CodexEvent = { type: string; [key: string]: unknown };
 export type CodexActivity = {
@@ -28,7 +29,7 @@ export type StoredCodexResponseMetrics = CodexResponseMetrics & {
   cumulativeCacheCreationTokens: number;
 };
 
-const codexWebPrompt = `You are running inside the CloudInk non-interactive Web UI. Complete the user's task directly in the current workspace. Do not ask for terminal confirmation because no interactive terminal is attached. If a decision is essential, explain the question clearly in your final response.`;
+const codexWebPrompt = `You are running inside the CloudInk Web UI. Complete the user's task directly in the current workspace. No interactive terminal is attached. When a user decision is required, use mcp__ui__ask_user with structured questions and stop this turn. Native request_user_input/request_user_input_async calls are also bridged to the Web UI. An accepted request is not a user answer: never infer a selection from silence or continue dependent work until the user answers in the next turn.`;
 
 let codexAvailability: Promise<boolean> | undefined;
 
@@ -263,10 +264,13 @@ export function activitiesFromCodexEvent(event: CodexEvent): CodexActivity[] {
   if (event.type === "item.completed" && item.type === "web_search") {
     return [
       {
-        kind: "tool_result",
-        label: "Web Search",
-        detail: String(item.query || "完成"),
+        kind: "tool",
+        label: `Web Search${item.query ? ` ${short(item.query)}` : ""}`,
+        detail: String(item.query || ""),
         toolUseId: id,
+        toolName: "WebSearch",
+        output: "",
+        isError: item.status === "failed" || Boolean(item.error),
       },
     ];
   }
@@ -413,6 +417,7 @@ export function runCodex(opts: {
   permissionMode: "auto" | "plan" | "manual" | "acceptEdits";
   model?: string;
   signal: AbortSignal;
+  uiContext?: { sessionId: string; authToken: string; apiBaseUrl: string };
 }) {
   const prompt = `${codexWebPrompt}\n\n${opts.prompt}`;
   const shared = ["--json", "--skip-git-repo-check"];
@@ -421,6 +426,11 @@ export function runCodex(opts: {
       ? opts.model
       : process.env.CODEX_MODEL;
   if (model) shared.push("--model", model);
+  if (opts.uiContext)
+    shared.push(
+      "-c",
+      `mcp_servers.ui={command=${JSON.stringify(process.execPath)},args=[${JSON.stringify(fileURLToPath(new URL("./ui-mcp.mjs", import.meta.url)))}],env_vars=["CLOUDINK_API_BASE_URL","CLOUDINK_SESSION_TOKEN","CLOUDINK_SESSION_ID"]}`,
+    );
   const sandbox = codexSandboxConfig(
     opts.permissionMode,
     opts.writableRoot,
@@ -431,11 +441,21 @@ export function runCodex(opts: {
     : ["exec", ...shared, ...sandbox.args, "--cd", opts.cwd, prompt];
   const child = spawn(process.env.CODEX_CLI_PATH || "codex", args, {
     cwd: opts.cwd,
-    env: process.env,
+    env: {
+      ...process.env,
+      ...(opts.uiContext
+        ? {
+            CLOUDINK_API_BASE_URL: opts.uiContext.apiBaseUrl,
+            CLOUDINK_SESSION_TOKEN: opts.uiContext.authToken,
+            CLOUDINK_SESSION_ID: opts.uiContext.sessionId,
+          }
+        : {}),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   opts.signal.addEventListener("abort", () => child.kill("SIGTERM"), {
     once: true,
   });
+  if (opts.signal.aborted) child.kill("SIGTERM");
   return child;
 }

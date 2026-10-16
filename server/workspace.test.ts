@@ -9,6 +9,8 @@ import {
   removeWorkspaceEntry,
   resolveWorkspaceFile,
   resolveWorkspaceTarget,
+  resolveWorkspaceEntry,
+  editableFileVersion,
 } from "./workspace.js";
 
 test("workspace listing includes sibling projects and ignores dependency caches", () => {
@@ -59,6 +61,54 @@ test("workspace listing includes sibling projects and ignores dependency caches"
   } finally {
     fs.rmSync(workspace, { recursive: true });
   }
+});
+
+test("listing reports omitted files even when they share one directory", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "cloudink-cap-"));
+  try {
+    for (let i = 0; i < 3; i++)
+      fs.writeFileSync(path.join(workspace, `${i}.txt`), "x");
+    assert.equal(listWorkspaceEntries(workspace, 3).truncated, false);
+    const limited = listWorkspaceEntries(workspace, 2);
+    assert.equal(limited.files.length, 2);
+    assert.equal(limited.truncated, true);
+    fs.unlinkSync(path.join(workspace, "2.txt"));
+    const exact = listWorkspaceEntries(workspace, 2);
+    assert.equal(exact.truncated, false);
+    assert.notEqual(exact.version, limited.version);
+  } finally {
+    fs.rmSync(workspace, { recursive: true });
+  }
+});
+
+test("existing copy and publication sources cannot escape through parent symlinks", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "cloudink-source-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "cloudink-private-"));
+  try {
+    fs.mkdirSync(path.join(outside, "site"));
+    fs.writeFileSync(path.join(outside, "site", "index.html"), "private");
+    fs.symlinkSync(outside, path.join(workspace, "external"));
+    assert.throws(() => resolveWorkspaceEntry(workspace, "external/site"));
+    assert.throws(() =>
+      resolveWorkspaceEntry(workspace, "external/site/index.html"),
+    );
+    fs.writeFileSync(path.join(workspace, "safe.html"), "safe");
+    assert.equal(
+      resolveWorkspaceEntry(workspace, "safe.html"),
+      path.join(workspace, "safe.html"),
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true });
+    fs.rmSync(outside, { recursive: true });
+  }
+});
+
+test("file versions change on same-size edits without relying on timestamps", () => {
+  assert.notEqual(editableFileVersion("one"), editableFileVersion("two"));
+  assert.equal(
+    editableFileVersion("你好"),
+    editableFileVersion(Buffer.from("你好")),
+  );
 });
 
 test("recursive folder deletion removes all descendants", () => {

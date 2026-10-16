@@ -12,7 +12,7 @@ const sessionToken = process.env.CLOUDINK_SESSION_TOKEN;
 
 async function cloudInkApi(path, init) {
   if (!apiBaseUrl || !sessionToken)
-    throw new Error("CloudInk 定时任务服务没有提供身份上下文");
+    throw new Error("CloudInk 服务没有提供身份上下文");
   const response = await fetch(`${apiBaseUrl}/api${path}`, {
     ...init,
     headers: {
@@ -94,14 +94,26 @@ server.registerTool(
       idempotentHint: true,
     },
   },
-  async () => ({
-    content: [
-      {
-        type: "text",
-        text: "The questions are now visible in the Web UI. Stop this turn and wait for the user's next message containing their submitted answers.",
-      },
-    ],
-  }),
+  async (input) => {
+    if (process.env.CLOUDINK_SESSION_ID) {
+      try {
+        await cloudInkApi(
+          `/sessions/${encodeURIComponent(process.env.CLOUDINK_SESSION_ID)}/questions`,
+          { method: "POST", body: JSON.stringify(input) },
+        );
+      } catch (error) {
+        return toolError(error);
+      }
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: "The questions are now visible in the Web UI. Stop this turn and wait for the user's next message containing their submitted answers.",
+        },
+      ],
+    };
+  },
 );
 
 server.registerTool(

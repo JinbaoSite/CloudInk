@@ -2,6 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveWorkspaceLink } from "../src/workspace-links.js";
 
+test("Markdown links resolve against their own directory before suffix matches", () => {
+  const paths = ["plain.txt", "docs/plain.txt", "shared/readme.md"];
+  assert.equal(
+    resolveWorkspaceLink("plain.txt", paths, "docs/notes.md"),
+    "docs/plain.txt",
+  );
+  assert.equal(
+    resolveWorkspaceLink("../shared/readme.md#heading", paths, "docs/notes.md"),
+    "shared/readme.md",
+  );
+  assert.equal(
+    resolveWorkspaceLink("/plain.txt", paths, "docs/notes.md"),
+    "plain.txt",
+  );
+  assert.equal(
+    resolveWorkspaceLink("../../plain.txt", paths, "docs/notes.md"),
+    null,
+  );
+});
+
 test("opens an absolute root-workspace link before the file list loads", () => {
   assert.equal(
     resolveWorkspaceLink(

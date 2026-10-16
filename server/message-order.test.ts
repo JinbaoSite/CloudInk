@@ -56,3 +56,30 @@ test("does not reorder messages that share a timestamp", () => {
     ["older search", "batched tool", "batched narration"],
   );
 });
+
+test("live tool completion finds its card before the streaming assistant placeholder", () => {
+  const messages = [
+    { id: "user-1", role: "user", content: "search" },
+    {
+      id: "tool-1",
+      role: "activity",
+      content: JSON.stringify({ kind: "tool", toolUseId: "search-1" }),
+    },
+    { id: "streaming-answer", role: "assistant", content: "" },
+  ];
+  assert.equal(
+    findActivityInCurrentTurn(messages, "search-1", "streaming-answer"),
+    1,
+  );
+  messages[2].content = "partial answer";
+  assert.equal(
+    findActivityInCurrentTurn(messages, "search-1", "streaming-answer"),
+    1,
+  );
+  assert.equal(findActivityInCurrentTurn(messages, "search-1"), -1);
+  messages.push({ id: "user-2", role: "user", content: "next turn" });
+  assert.equal(
+    findActivityInCurrentTurn(messages, "search-1", "streaming-answer"),
+    -1,
+  );
+});

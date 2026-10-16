@@ -237,18 +237,20 @@ function enqueueDueTasks() {
   }
 }
 
-function parseStreamError(stream: string) {
+export function scheduledStreamOutcome(stream: string) {
   let error = "";
   for (const line of stream.split("\n")) {
     if (!line.trim()) continue;
     try {
       const event = JSON.parse(line) as { type?: string; error?: string };
+      if (event.type === "interrupted")
+        return { error: "用户已中断此次回复", interrupted: true };
       if (event.type === "error") error = event.error || "Claude 执行失败";
       if (event.type === "question")
         error = "任务需要用户确认，无法在无人值守模式下继续";
     } catch {}
   }
-  return error;
+  return { error, interrupted: false };
 }
 
 async function executeRun(
@@ -285,7 +287,20 @@ async function executeRun(
       },
     );
     const stream = await response.text();
-    const streamError = parseStreamError(stream);
+    const outcome = scheduledStreamOutcome(stream);
+    if (outcome.interrupted) {
+      const finishedAt = new Date();
+      db.prepare(
+        "UPDATE scheduled_task_runs SET status='interrupted',finished_at=?,duration_ms=?,error=? WHERE id=?",
+      ).run(
+        finishedAt.toISOString(),
+        finishedAt.getTime() - new Date(startedAt).getTime(),
+        outcome.error,
+        run.id,
+      );
+      return;
+    }
+    const streamError = outcome.error;
     if (!response.ok || streamError)
       throw new Error(streamError || `内部请求失败（${response.status}）`);
     const metricsRow = db

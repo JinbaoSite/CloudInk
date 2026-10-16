@@ -1,4 +1,5 @@
 export type OrderedMessage = {
+  id?: string;
   role: string;
   content: string;
   created_at?: string;
@@ -16,9 +17,16 @@ export function preserveMessageOrder<T extends OrderedMessage>(messages: T[]) {
 export function findActivityInCurrentTurn<T extends OrderedMessage>(
   messages: T[],
   toolUseId: string,
+  streamingAssistantId?: string,
 ) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
+    if (
+      message.role === "assistant" &&
+      message.id === streamingAssistantId &&
+      streamingAssistantId
+    )
+      continue;
     if (message.role === "user" || message.role === "assistant") break;
     if (message.role !== "activity") continue;
     try {

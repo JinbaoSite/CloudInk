@@ -40,6 +40,11 @@ test("new and resumed Codex runs select the Git-writable profile and preserve ne
         permissionMode: "auto",
         threadId,
         signal: new AbortController().signal,
+        uiContext: {
+          sessionId: "test-session",
+          authToken: "test-token",
+          apiBaseUrl: "http://127.0.0.1:12345",
+        },
       });
       let output = "";
       child.stdout.on("data", (chunk) => {
@@ -59,6 +64,17 @@ test("new and resumed Codex runs select the Git-writable profile and preserve ne
       assert.ok(!args.includes("--sandbox"));
       assert.ok(!args.some((arg) => arg.startsWith("sandbox_mode=")));
       assert.equal(args.includes("resume"), Boolean(threadId));
+      assert.ok(
+        args.some(
+          (arg) =>
+            arg.startsWith("mcp_servers.ui=") &&
+            arg.includes("CLOUDINK_SESSION_ID"),
+        ),
+      );
+      assert.ok(
+        !args.some((arg) => arg.includes("test-token")),
+        "credentials must remain out of command-line arguments",
+      );
     }
   } finally {
     if (priorHome === undefined) delete process.env.CODEX_HOME;
@@ -314,4 +330,20 @@ test("converts cumulative Codex usage to usage for the current turn", () => {
       cumulativeCacheCreationTokens: 8,
     },
   );
+});
+
+test("search completion is a self-contained update, including when start was missed", () => {
+  const [started] = activitiesFromCodexEvent({
+    type: "item.started",
+    item: { id: "search-1", type: "web_search" },
+  });
+  const [completed] = activitiesFromCodexEvent({
+    type: "item.completed",
+    item: { id: "search-1", type: "web_search", query: "recsys paper date" },
+  });
+  assert.equal(started.toolUseId, completed.toolUseId);
+  assert.equal(completed.kind, "tool");
+  assert.equal(completed.toolName, "WebSearch");
+  assert.equal(completed.detail, "recsys paper date");
+  assert.equal(completed.output, "");
 });

@@ -16,6 +16,27 @@
   color: #8c867d;
   font-size: 12px;
 }
+.workspace-editor:has(.workspace-file-conflict) {
+  grid-template-rows: 38px auto minmax(0, 1fr) 28px;
+}
+.workspace-file-conflict {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #fff4ce;
+  color: #705400;
+  font-size: 12px;
+}
+.workspace-file-conflict button {
+  padding: 3px 8px;
+  border: 1px solid #cdb56b;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
 .workspace-editor-status {
   display: flex;
   align-items: center;

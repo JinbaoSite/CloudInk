@@ -137,7 +137,7 @@ type Activity = {
 type Message = {
   id?: string;
   cursor?: number;
-  role: "user" | "assistant" | "activity" | "metrics";
+  role: "user" | "assistant" | "activity" | "metrics" | "interruption";
   content: string;
   created_at?: string;
   metrics?: ResponseMetrics;
@@ -731,9 +731,27 @@ function App() {
     [draggingFiles, setDraggingFiles] = useState(false),
     [showScrollToBottom, setShowScrollToBottom] = useState(false),
     [busy, setBusy] = useState(false),
+    [stoppingResponse, setStoppingResponse] = useState(false),
     [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const workspaceFileInputRef = useRef<HTMLInputElement>(null);
+  const openWorkspaceFilesRef = useRef(openWorkspaceFiles);
+  openWorkspaceFilesRef.current = openWorkspaceFiles;
+  const workspaceSavesRef = useRef(new Set<string>());
+  const pendingQuestionRef = useRef(pendingQuestion);
+  pendingQuestionRef.current = pendingQuestion;
+  const hasUnsavedWorkspaceFiles = openWorkspaceFiles.some(
+    (file) => file.content !== file.savedContent,
+  );
+  useEffect(() => {
+    if (!hasUnsavedWorkspaceFiles && !savingWorkspacePath) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsavedWorkspaceFiles, savingWorkspacePath]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const inputHighlightRef = useRef<HTMLDivElement>(null);
@@ -754,6 +772,7 @@ function App() {
   const messageCursorRef = useRef(0);
   const responseAbortRef = useRef<AbortController | null>(null);
   const sendInFlightRef = useRef(false);
+  const runStateRevisionRef = useRef(0);
   const resizingSidebarRef = useRef(false);
   const resizingWorkspaceRef = useRef(false);
   const fileDragDepthRef = useRef(0);
@@ -833,6 +852,7 @@ function App() {
   }
   function selectOrdinaryChats() {
     if (busy || !activeProjectIdForRequests) return;
+    if (!confirmDiscardWorkspaceFiles()) return;
     activeProjectIdForRequests = "";
     setActiveProjectId("");
     localStorage.removeItem("cloudink-project");
@@ -849,6 +869,7 @@ function App() {
   }
   function selectProject(project: Project) {
     if (busy || project.id === activeProjectIdForRequests) return;
+    if (!confirmDiscardWorkspaceFiles()) return;
     activeProjectIdForRequests = project.id;
     setActiveProjectId(project.id);
     localStorage.setItem("cloudink-project", project.id);
@@ -1186,10 +1207,12 @@ function App() {
     }
   }
   function prepareForSessionSwitch() {
+    runStateRevisionRef.current += 1;
     skipMessageLoadForRef.current = "";
     messageCursorRef.current = 0;
     responseAbortRef.current?.abort();
     responseAbortRef.current = null;
+    sendInFlightRef.current = false;
     setMessages([]);
     setBusy(false);
     setPendingQuestion(null);
@@ -1508,18 +1531,36 @@ function App() {
         return;
       }
       try {
+        const revision = runStateRevisionRef.current;
+        const canApplyRunState = () =>
+          !disposed &&
+          revision === runStateRevisionRef.current &&
+          !responseAbortRef.current;
+        const previousQuestionId = pendingQuestionRef.current?.toolUseId;
         const run = (await api(`/sessions/${active}/run`)) as {
           running: boolean;
           title?: string;
+          pendingQuestion?: PendingQuestion | null;
         };
         if (disposed) return;
+        if (!canApplyRunState()) {
+          timer = window.setTimeout(syncBackgroundRun, 2000);
+          return;
+        }
+        setPendingQuestion((current) => {
+          if (run.pendingQuestion)
+            return current?.toolUseId === run.pendingQuestion.toolUseId
+              ? current
+              : run.pendingQuestion;
+          return current?.toolUseId === previousQuestionId ? null : current;
+        });
         if (!activeSession && run.title) setScheduledSessionTitle(run.title);
         setBusy(run.running);
         if (!firstCheck && run.running) {
           const items = (await api(
             `/sessions/${active}/messages?after_cursor=${messageCursorRef.current}&include_recent=1`,
           )) as Message[];
-          if (!disposed && items.length) {
+          if (canApplyRunState() && items.length) {
             messageCursorRef.current = Math.max(
               messageCursorRef.current,
               ...items.map((message) => message.cursor || 0),
@@ -1530,7 +1571,7 @@ function App() {
           const items = (await api(
             `/sessions/${active}/messages`,
           )) as Message[];
-          if (!disposed) {
+          if (canApplyRunState()) {
             messageCursorRef.current = Math.max(
               0,
               ...items.map((message) => message.cursor || 0),
@@ -1774,11 +1815,15 @@ function App() {
         version: string;
         files?: WorkspaceFile[];
         directories?: string[];
+        truncated?: boolean;
       };
       workspaceFilesVersionRef.current = result.version || "";
       if (result.changed && result.files) {
         setWorkspaceFiles(result.files);
         setWorkspaceDirectories(result.directories || []);
+        void refreshOpenWorkspaceFiles(result.files, force);
+        if (result.truncated && !silent)
+          showWorkspaceNotice("文件较多，仅显示前 2000 个文件");
       }
       setWorkspaceFilesLoaded(true);
       void publicationsRequest?.then((publications) => {
@@ -1807,6 +1852,105 @@ function App() {
   async function refreshWorkspaceFiles() {
     setWorkspaceFilesLoaded(false);
     await loadWorkspaceFiles(true);
+  }
+  function confirmDiscardWorkspaceFiles() {
+    return (
+      !openWorkspaceFilesRef.current.some(
+        (file) => file.content !== file.savedContent,
+      ) || window.confirm("有文件尚未保存，仍要离开并丢弃修改吗？")
+    );
+  }
+  async function refreshOpenWorkspaceFiles(
+    listed: WorkspaceFile[],
+    force: boolean,
+  ) {
+    const previous = new Map(workspaceFiles.map((file) => [file.path, file]));
+    const latest = new Map(listed.map((file) => [file.path, file]));
+    await Promise.all(
+      openWorkspaceFilesRef.current.map(async (snapshot) => {
+        if (
+          snapshot.loading ||
+          snapshot.error ||
+          isWorkspaceImage(snapshot.path) ||
+          workspaceSavesRef.current.has(snapshot.path)
+        )
+          return;
+        const before = previous.get(snapshot.path),
+          after = latest.get(snapshot.path);
+        if (
+          !force &&
+          before?.modifiedAt === after?.modifiedAt &&
+          before?.size === after?.size
+        )
+          return;
+        try {
+          const loaded = (await api(
+            `/workspace/file?path=${encodeURIComponent(snapshot.path)}`,
+            undefined,
+            false,
+          )) as WorkspaceFile & { content: string; version: string };
+          setOpenWorkspaceFiles((current) =>
+            current.map((file) => {
+              if (
+                file.path !== snapshot.path ||
+                file.version !== snapshot.version ||
+                workspaceSavesRef.current.has(file.path)
+              )
+                return file;
+              if (loaded.version === file.version) return file;
+              return file.content !== file.savedContent
+                ? { ...file, externalChange: true }
+                : {
+                    ...file,
+                    ...loaded,
+                    savedContent: loaded.content,
+                    externalChange: false,
+                  };
+            }),
+          );
+        } catch {
+          setOpenWorkspaceFiles((current) =>
+            current.map((file) =>
+              file.path === snapshot.path
+                ? { ...file, externalChange: true }
+                : file,
+            ),
+          );
+        }
+      }),
+    );
+  }
+  async function reloadWorkspaceFile(filePath: string) {
+    const file = openWorkspaceFilesRef.current.find(
+      (file) => file.path === filePath,
+    );
+    if (
+      !file ||
+      (file.content !== file.savedContent &&
+        !window.confirm("重新读取会丢弃此文件的本地修改，继续吗？"))
+    )
+      return;
+    try {
+      const loaded = (await api(
+        `/workspace/file?path=${encodeURIComponent(filePath)}`,
+        undefined,
+        false,
+      )) as WorkspaceFile & { content: string; version: string };
+      setOpenWorkspaceFiles((current) =>
+        current.map((item) =>
+          item === file
+            ? {
+                ...item,
+                ...loaded,
+                savedContent: loaded.content,
+                externalChange: false,
+              }
+            : item,
+        ),
+      );
+    } catch (error) {
+      setError((error as Error).message);
+    }
   }
   async function createWorkspaceEntry(name: string) {
     const pending = pendingWorkspaceEntry;
@@ -1875,17 +2019,27 @@ function App() {
         },
         false,
       )) as { path: string; name: string };
-      if (target.kind === "file") {
-        setOpenWorkspaceFiles((current) =>
-          current.map((openFile) =>
-            openFile.path === target.path
-              ? { ...openFile, ...result }
-              : openFile,
-          ),
-        );
-        if (activeWorkspacePath === target.path)
-          setActiveWorkspacePath(result.path);
-      }
+      const renamedPath = (filePath: string) =>
+        filePath === target.path ||
+        (target.kind === "folder" && filePath.startsWith(`${target.path}/`))
+          ? result.path + filePath.slice(target.path.length)
+          : filePath;
+      setOpenWorkspaceFiles((current) =>
+        current.map((file) => ({
+          ...file,
+          path: renamedPath(file.path),
+          name: renamedPath(file.path).split("/").pop()!,
+        })),
+      );
+      setActiveWorkspacePath((current) => renamedPath(current));
+      setFileClipboard((current) =>
+        current
+          ? {
+              ...current,
+              file: { ...current.file, path: renamedPath(current.file.path) },
+            }
+          : current,
+      );
       setPendingWorkspaceRename(null);
       await refreshWorkspaceFiles();
     } catch (renameError) {
@@ -1903,6 +2057,24 @@ function App() {
     path: string;
     kind: "file" | "folder";
   }) {
+    const affected = (file: OpenWorkspaceFile) =>
+      file.path === target.path ||
+      (target.kind === "folder" && file.path.startsWith(`${target.path}/`));
+    if (
+      openWorkspaceFilesRef.current.some(
+        (file) => affected(file) && workspaceSavesRef.current.has(file.path),
+      )
+    ) {
+      setError("文件正在保存，请稍后再删除");
+      return;
+    }
+    if (
+      openWorkspaceFilesRef.current.some(
+        (file) => affected(file) && file.content !== file.savedContent,
+      ) &&
+      !window.confirm("此条目包含未保存的修改，仍要删除并丢弃修改吗？")
+    )
+      return;
     try {
       await api(
         `/workspace/entry?path=${encodeURIComponent(target.path)}`,
@@ -2147,22 +2319,36 @@ function App() {
     );
   }
   async function saveWorkspaceFile(filePath: string) {
-    const file = openWorkspaceFiles.find((item) => item.path === filePath);
+    const file = openWorkspaceFilesRef.current.find(
+      (item) => item.path === filePath,
+    );
     if (!file || file.loading || file.error) return;
+    if (workspaceSavesRef.current.has(filePath)) return;
+    workspaceSavesRef.current.add(filePath);
     setSavingWorkspacePath(filePath);
     try {
       const result = (await api(
         "/workspace/file",
         {
           method: "PUT",
-          body: JSON.stringify({ path: file.path, content: file.content }),
+          body: JSON.stringify({
+            path: file.path,
+            content: file.content,
+            version: file.version,
+          }),
         },
         false,
-      )) as { size: number };
+      )) as { size: number; version: string };
       setOpenWorkspaceFiles((current) =>
         current.map((item) =>
           item.path === filePath
-            ? { ...item, size: result.size, savedContent: item.content }
+            ? {
+                ...item,
+                size: result.size,
+                savedContent: file.content,
+                version: result.version,
+                externalChange: false,
+              }
             : item,
         ),
       );
@@ -2173,8 +2359,17 @@ function App() {
       );
     } catch (saveError) {
       setError((saveError as Error).message);
+      if ((saveError as Error).message.includes("外部修改"))
+        setOpenWorkspaceFiles((current) =>
+          current.map((file) =>
+            file.path === filePath ? { ...file, externalChange: true } : file,
+          ),
+        );
     } finally {
-      setSavingWorkspacePath("");
+      workspaceSavesRef.current.delete(filePath);
+      setSavingWorkspacePath((current) =>
+        current === filePath ? "" : current,
+      );
     }
   }
   function closeWorkspaceFile(filePath: string) {
@@ -2182,6 +2377,10 @@ function App() {
       (file) => file.path === filePath,
     );
     if (index < 0) return;
+    if (workspaceSavesRef.current.has(filePath)) {
+      setError("文件正在保存，请稍后再关闭");
+      return;
+    }
     const file = openWorkspaceFiles[index];
     if (
       file.content !== file.savedContent &&
@@ -2229,7 +2428,9 @@ function App() {
     // session-creation request so rapid Enter/click events cannot create and
     // run the same new conversation more than once.
     sendInFlightRef.current = true;
+    runStateRevisionRef.current += 1;
     const text = input;
+    const answeredQuestionId = pendingQuestion?.toolUseId;
     const sentAttachments = attachments;
     const userMessageId = localId("user");
     const assistantMessageId = localId("assistant");
@@ -2279,9 +2480,17 @@ function App() {
           backend: currentBackend,
           model: currentModel === "CLI default" ? undefined : currentModel,
           attachments: sentAttachments,
+          questionId: answeredQuestionId,
         }),
       });
       if (!r.ok) throw new Error((await r.json()).error);
+      if (answeredQuestionId) {
+        setPendingQuestion((current) =>
+          current?.toolUseId === answeredQuestionId ? null : current,
+        );
+        setQuestionAnswers({});
+        setCustomQuestionAnswers({});
+      }
       setSessions((current) =>
         current.map((session) =>
           session.id === id
@@ -2300,6 +2509,7 @@ function App() {
         error?: string;
         model?: string;
         question?: PendingQuestion;
+        message?: Message;
         metrics?: ResponseMetrics;
       }) => {
         if (evt.type === "model" && evt.model) setCurrentModel(evt.model);
@@ -2342,6 +2552,7 @@ function App() {
               const existingIndex = findActivityInCurrentTurn(
                 items,
                 incomingActivity.toolUseId,
+                assistantMessageId,
               );
               if (existingIndex >= 0) {
                 const next = [...items];
@@ -2366,6 +2577,14 @@ function App() {
               ...items.slice(assistantIndex),
             ];
           });
+        }
+        if (evt.type === "interrupted" && evt.message) {
+          const message = evt.message;
+          setMessages((items) =>
+            items.some((item) => item.id === message.id)
+              ? items
+              : [...items, message],
+          );
         }
         if (evt.type === "error")
           throw new Error(evt.error || "CloudInk 请求失败");
@@ -2411,14 +2630,15 @@ function App() {
         setError((e as Error).message);
       }
     } finally {
-      sendInFlightRef.current = false;
-      if (responseAbortRef.current === requestController)
-        responseAbortRef.current = null;
-      if (id && sessionIdFromLocation() === id) await markSessionRead(id);
-      await load().catch(() => undefined);
-      if (id && sessionIdFromLocation() === id) {
+      const ownsResponse = () =>
+        responseAbortRef.current === requestController &&
+        sessionIdFromLocation() === id;
+      if (id && ownsResponse()) await markSessionRead(id);
+      if (ownsResponse()) await load().catch(() => undefined);
+      if (id && ownsResponse()) {
         await api(`/sessions/${id}/messages`)
           .then((items: Message[]) => {
+            if (!ownsResponse()) return;
             messageCursorRef.current = Math.max(
               0,
               ...items.map((message) => message.cursor || 0),
@@ -2427,22 +2647,43 @@ function App() {
           })
           .catch(() => undefined);
       }
-      setBusy(false);
+      if (responseAbortRef.current === requestController) {
+        responseAbortRef.current = null;
+        sendInFlightRef.current = false;
+        if (sessionIdFromLocation() === id) setBusy(false);
+      }
     }
   }
   async function stopResponse() {
+    if (stoppingResponse) return;
     if (!active) {
       responseAbortRef.current?.abort();
       return;
     }
+    const sessionId = active;
+    const controller = responseAbortRef.current;
+    runStateRevisionRef.current += 1;
     try {
-      await api(`/sessions/${active}/stop`, { method: "POST" });
-      responseAbortRef.current?.abort();
-      responseAbortRef.current = null;
+      setStoppingResponse(true);
+      const result = await api(`/sessions/${sessionId}/stop`, {
+        method: "POST",
+      });
+      if (result?.stopping) return;
+      if (sessionIdFromLocation() !== sessionId) return;
+      if (responseAbortRef.current === controller) {
+        controller?.abort();
+        responseAbortRef.current = null;
+        sendInFlightRef.current = false;
+      }
       setBusy(false);
       await load().catch(() => undefined);
+      const items = (await api(`/sessions/${sessionId}/messages`)) as Message[];
+      if (sessionIdFromLocation() === sessionId)
+        setMessages(mergeActivityMessages(items));
     } catch (stopError) {
       setError((stopError as Error).message);
+    } finally {
+      setStoppingResponse(false);
     }
   }
   if (me === undefined) return <div className="center">加载中…</div>;
@@ -2470,6 +2711,7 @@ function App() {
     autoScrollRef.current = true;
     const projectId = session.project_id || "";
     if (projectId !== activeProjectIdForRequests) {
+      if (!confirmDiscardWorkspaceFiles()) return;
       activeProjectIdForRequests = projectId;
       setActiveProjectId(projectId);
       if (projectId) localStorage.setItem("cloudink-project", projectId);
@@ -3750,6 +3992,9 @@ function App() {
             onSave={(filePath) => void saveWorkspaceFile(filePath)}
             onClose={closeWorkspaceFile}
             onOpenSidebar={() => setMobileSessionsOpen(true)}
+            workspacePaths={workspaceFiles.map((file) => file.path)}
+            onOpenFile={openWorkspacePath}
+            onReload={(filePath) => void reloadWorkspaceFile(filePath)}
           />
         </Suspense>
       )}
@@ -3876,6 +4121,34 @@ function App() {
             </div>
           )}
           {messages.map((m, i) => {
+            if (m.role === "interruption")
+              return (
+                <div
+                  className="response-interruption"
+                  role="note"
+                  aria-label="用户已中断此次回复"
+                  key={m.id || i}
+                >
+                  <span
+                    className="response-interruption-icon"
+                    aria-hidden="true"
+                  >
+                    <span />
+                  </span>
+                  <span>用户已中断此次回复</span>
+                  {m.created_at && (
+                    <time
+                      dateTime={m.created_at}
+                      title={new Date(m.created_at).toLocaleString()}
+                    >
+                      {new Date(m.created_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </time>
+                  )}
+                </div>
+              );
             if (m.role === "activity") {
               const activity = parseActivity(m) || {
                 kind: "status" as const,
@@ -4066,7 +4339,19 @@ function App() {
                   [questionIndex]: value,
                 }))
               }
-              onDismiss={() => setPendingQuestion(null)}
+              onDismiss={() => {
+                const questionId = pendingQuestion.toolUseId;
+                void api(`/sessions/${active}/questions/dismiss`, {
+                  method: "POST",
+                  body: JSON.stringify({ questionId }),
+                })
+                  .then(() =>
+                    setPendingQuestion((current) =>
+                      current?.toolUseId === questionId ? null : current,
+                    ),
+                  )
+                  .catch((error) => setError((error as Error).message));
+              }}
               onSubmit={() => {
                 const response = pendingQuestion.questions
                   .map((question, index) => {
@@ -4079,9 +4364,6 @@ function App() {
                     return `${question.question}\n${answer}`;
                   })
                   .join("\n\n");
-                setPendingQuestion(null);
-                setQuestionAnswers({});
-                setCustomQuestionAnswers({});
                 setInput(response);
                 requestAnimationFrame(() =>
                   composerFormRef.current?.requestSubmit(),
@@ -4584,11 +4866,18 @@ function App() {
                 className={`send-button ${busy ? "stop-button" : ""}`}
                 disabled={
                   viewingForeignSession ||
+                  stoppingResponse ||
                   uploading ||
                   (!busy && !input.trim() && !attachments.length)
                 }
                 aria-label={busy ? "中止回答" : "发送消息"}
-                title={busy ? "中止回答" : "发送消息"}
+                title={
+                  stoppingResponse
+                    ? "正在中断回复…"
+                    : busy
+                      ? "中止回答"
+                      : "发送消息"
+                }
                 onClick={busy ? () => void stopResponse() : undefined}
               >
                 {busy ? <span className="stop-icon" /> : "↑"}
@@ -4910,7 +5199,11 @@ function SubmitAnswerPanel({
       Boolean(answers[index]?.length) || Boolean(customAnswers[index]?.trim()),
   );
   return (
-    <section className="submit-answer-panel" aria-label="CloudInk 需要你的回答">
+    <section
+      className="submit-answer-panel"
+      role="dialog"
+      aria-label="CloudInk 需要你的回答"
+    >
       <header>
         <div>
           <span className="answer-status-dot" aria-hidden="true" />
@@ -5400,6 +5693,10 @@ function WorkspaceDirectory({
   onDropFiles: (event: React.DragEvent, directory: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const creatingHere = pendingEntry?.directory === node.path;
+  useEffect(() => {
+    if (creatingHere) setOpen(true);
+  }, [creatingHere]);
   return (
     <details
       className={`file-directory${dropDirectory === node.path ? " drop-target" : ""}`}

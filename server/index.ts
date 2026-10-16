@@ -10,6 +10,14 @@ import http from "node:http";
 import multer from "multer";
 import { z } from "zod";
 import { db, workspaceRoot } from "./db.js";
+import { recordUserInterruption } from "./interruption.js";
+import {
+  normalizeQuestions,
+  pendingQuestionSchema,
+  questionsFromCodexEvent,
+  watchCodexQuestions,
+  type PendingQuestion,
+} from "./questions.js";
 import {
   descriptionForSlashItem,
   discoverCodexCapabilities,
@@ -27,8 +35,10 @@ import {
   readEditableFile,
   removeWorkspaceEntry,
   resolveWorkspaceDirectory,
+  resolveWorkspaceEntry,
   resolveWorkspaceFile,
   resolveWorkspaceTarget,
+  editableFileVersion,
 } from "./workspace.js";
 import {
   cookieOptions,
@@ -105,9 +115,14 @@ if (rootPassword) {
 }
 const detectedModel = detectClaudeModel(process.cwd());
 type ActiveClaudeRun = {
+  id: string;
   abort: AbortController;
   userId: string;
   startedAt: string;
+  waitingForInput?: boolean;
+  onQuestion?: (question: PendingQuestion) => void;
+  interruptedAt?: string;
+  completion: Promise<void>;
 };
 const activeClaudeRuns = new Map<string, ActiveClaudeRun>();
 function requestedProjectId(req: express.Request) {
@@ -227,7 +242,7 @@ function servePublishedResource(
 ) {
   try {
     const workspace = path.join(workspaceRoot, page.username);
-    const publicationRoot = resolveWorkspaceFile(workspace, page.file_path);
+    const publicationRoot = resolveWorkspaceEntry(workspace, page.file_path);
     let absolutePath: string;
     if (page.kind === "file") {
       if (resource) throw new Error("Page not found");
@@ -237,7 +252,7 @@ function servePublishedResource(
       const normalizedResource = requestedResource.endsWith("/")
         ? `${requestedResource}index.html`
         : requestedResource;
-      absolutePath = resolveWorkspaceFile(publicationRoot, normalizedResource);
+      absolutePath = resolveWorkspaceEntry(publicationRoot, normalizedResource);
       const realRoot = fs.realpathSync(publicationRoot);
       const realResource = fs.realpathSync(absolutePath);
       const relative = path.relative(realRoot, realResource);
@@ -418,7 +433,8 @@ const upload = multer({
       }
     },
   }),
-  limits: { fileSize: MAX_UPLOAD_SIZE, files: 10 },
+  // Busboy emits its limit event at equality; allow the documented inclusive cap.
+  limits: { fileSize: MAX_UPLOAD_SIZE + 1, files: 10 },
 });
 const credentials = z.object({
   email: z
@@ -1047,6 +1063,69 @@ function userWorkspace(req: express.Request) {
   const uid = (req as AuthedRequest).userId;
   return projectWorkspaceFor(uid, requestedProjectId(req));
 }
+const previewSessions = new Map<
+  string,
+  { workspace: string; userId: string; expiresAt: number }
+>();
+const PREVIEW_LIFETIME = 5 * 60_000;
+app.post("/api/workspace/preview-session", requireAuth, (req, res) => {
+  const workspace = userWorkspace(req);
+  if (!workspace) return res.status(401).json({ error: "用户不存在" });
+  try {
+    const requestedPath = z.string().min(1).parse(req.body.path);
+    const file = resolveWorkspaceEntry(workspace, requestedPath);
+    if (!/\.html?$/i.test(file) || !fs.statSync(file).isFile())
+      throw new Error("只能预览 HTML 文件");
+    const now = Date.now();
+    for (const [token, session] of previewSessions)
+      if (session.expiresAt <= now) previewSessions.delete(token);
+    if (previewSessions.size >= 1024)
+      previewSessions.delete(previewSessions.keys().next().value!);
+    const token = crypto.randomBytes(24).toString("hex");
+    previewSessions.set(token, {
+      workspace: fs.realpathSync(workspace),
+      userId: (req as AuthedRequest).userId,
+      expiresAt: now + PREVIEW_LIFETIME,
+    });
+    res.set("Cache-Control", "no-store");
+    return res.json({ token });
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
+});
+// Opaque sandbox frames cannot use the application's SameSite login cookie.
+// A short-lived read-only capability loads their assets without granting them
+// the application's origin, authentication cookie, or write APIs.
+app.get(
+  /^\/api\/workspace\/preview-session\/([a-f0-9]{48})\/(.+)$/,
+  (req, res) => {
+    const session = previewSessions.get(req.params[0]);
+    if (!session || session.expiresAt <= Date.now()) {
+      previewSessions.delete(req.params[0]);
+      return res.status(404).end();
+    }
+    const user = db
+      .prepare("SELECT approved FROM users WHERE id=?")
+      .get(session.userId) as { approved: number } | undefined;
+    if (!user?.approved) return res.status(404).end();
+    try {
+      const file = resolveWorkspaceEntry(session.workspace, req.params[1]);
+      if (!fs.statSync(file).isFile()) throw new Error("预览资源无效");
+      res.set({
+        "Access-Control-Allow-Origin": "*",
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+      });
+      if (/\.html?$/i.test(file))
+        res.set("Content-Security-Policy", "sandbox allow-scripts");
+      return res.sendFile(file);
+    } catch {
+      return res.status(404).end();
+    }
+  },
+);
 app.get(/^\/api\/workspace\/preview\/(.+)$/, requireAuth, (req, res) => {
   const workspace = userWorkspace(req);
   if (!workspace) return res.status(401).json({ error: "用户不存在" });
@@ -1085,6 +1164,7 @@ app.get("/api/workspace/file", requireAuth, (req, res) => {
       name: path.basename(requestedPath),
       size: file.stat.size,
       mtime: file.stat.mtime.toISOString(),
+      version: file.version,
       content: file.content,
     });
   } catch (error) {
@@ -1101,6 +1181,7 @@ app.put("/api/workspace/file", requireAuth, (req, res) => {
     .object({
       path: z.string().min(1),
       content: z.string().max(5 * 1024 * 1024),
+      version: z.string().min(1).optional(),
     })
     .safeParse(req.body);
   if (!payload.success)
@@ -1109,12 +1190,19 @@ app.put("/api/workspace/file", requireAuth, (req, res) => {
     return res.status(400).json({ error: "文件内容无效或超过 5MB" });
   try {
     const file = readEditableFile(workspace, payload.data.path);
+    if (!payload.data.version)
+      return res.status(428).json({ error: "请重新读取文件后保存" });
+    if (file.version !== payload.data.version)
+      return res.status(409).json({
+        error: "文件已在外部修改，请重新读取后再保存，本地修改已保留",
+      });
     fs.writeFileSync(file.absolutePath, payload.data.content, "utf8");
     const stat = fs.statSync(file.absolutePath);
     return res.json({
       path: payload.data.path,
       size: stat.size,
       mtime: stat.mtime.toISOString(),
+      version: editableFileVersion(payload.data.content),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "无法保存文件";
@@ -1176,7 +1264,7 @@ app.post("/api/workspace/publish", requireAuth, (req, res) => {
   )
     return res.status(400).json({ error: "只能发布 HTML 文件或网站文件夹" });
   try {
-    const absolutePath = resolveWorkspaceFile(workspace, payload.data.path);
+    const absolutePath = resolveWorkspaceEntry(workspace, payload.data.path);
     const stat = fs.lstatSync(absolutePath);
     if (
       stat.isSymbolicLink() ||
@@ -1359,7 +1447,7 @@ app.post("/api/workspace/paste", requireAuth, (req, res) => {
     .safeParse(req.body);
   if (!payload.success) return res.status(400).json({ error: "粘贴参数无效" });
   try {
-    const source = resolveWorkspaceFile(workspace, payload.data.source);
+    const source = resolveWorkspaceEntry(workspace, payload.data.source);
     const stat = fs.lstatSync(source);
     if (!stat.isFile() || stat.isSymbolicLink())
       throw new Error("文件不可粘贴");
@@ -1626,17 +1714,62 @@ app.get("/api/sessions/:id/run", requireAuth, (req, res) => {
   const uid = (req as AuthedRequest).userId;
   const sessionId = String(req.params.id);
   const session = db
-    .prepare("SELECT id,title FROM sessions WHERE id=? AND user_id=?")
-    .get(req.params.id, uid) as { id: string; title: string } | undefined;
+    .prepare(
+      "SELECT id,title,pending_question FROM sessions WHERE id=? AND user_id=?",
+    )
+    .get(req.params.id, uid) as
+    { id: string; title: string; pending_question: string | null } | undefined;
   if (!session) return res.status(404).json({ error: "会话不存在" });
   const run = activeClaudeRuns.get(sessionId);
   return res.json({
     running: Boolean(run && run.userId === uid),
     startedAt: run?.userId === uid ? run.startedAt : null,
     title: session.title,
+    pendingQuestion: parsePendingQuestion(session.pending_question),
   });
 });
-app.post("/api/sessions/:id/stop", requireAuth, (req, res) => {
+function parsePendingQuestion(value: string | null): PendingQuestion | null {
+  try {
+    const parsed = pendingQuestionSchema.safeParse(JSON.parse(value || "null"));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+app.post("/api/sessions/:id/questions", requireAuth, (req, res) => {
+  const uid = (req as AuthedRequest).userId;
+  const sessionId = String(req.params.id);
+  if (
+    !db
+      .prepare("SELECT 1 FROM sessions WHERE id=? AND user_id=?")
+      .get(sessionId, uid)
+  )
+    return res.status(404).json({ error: "会话不存在" });
+  const run = activeClaudeRuns.get(sessionId);
+  if (!run?.onQuestion || run.userId !== uid)
+    return res.status(409).json({ error: "会话没有正在运行的提问通道" });
+  const question = normalizeQuestions(req.body, crypto.randomUUID());
+  if (!question) return res.status(400).json({ error: "提问格式无效" });
+  run.onQuestion(question);
+  return res.json({ accepted: true, awaitingAnswer: true });
+});
+app.post("/api/sessions/:id/questions/dismiss", requireAuth, (req, res) => {
+  const questionId = z.string().min(1).max(200).safeParse(req.body?.questionId);
+  if (!questionId.success)
+    return res.status(400).json({ error: "提问标识无效" });
+  const row = db
+    .prepare("SELECT pending_question FROM sessions WHERE id=? AND user_id=?")
+    .get(req.params.id, (req as AuthedRequest).userId) as
+    { pending_question: string | null } | undefined;
+  if (!row) return res.status(404).json({ error: "会话不存在" });
+  if (parsePendingQuestion(row.pending_question)?.toolUseId !== questionId.data)
+    return res.status(409).json({ error: "提问已更新，请刷新会话" });
+  db.prepare(
+    "UPDATE sessions SET pending_question=NULL WHERE id=? AND user_id=?",
+  ).run(req.params.id, (req as AuthedRequest).userId);
+  return res.status(204).end();
+});
+app.post("/api/sessions/:id/stop", requireAuth, async (req, res) => {
   const uid = (req as AuthedRequest).userId;
   const sessionId = String(req.params.id);
   const session = db
@@ -1645,8 +1778,21 @@ app.post("/api/sessions/:id/stop", requireAuth, (req, res) => {
   if (!session) return res.status(404).json({ error: "会话不存在" });
   const run = activeClaudeRuns.get(sessionId);
   if (!run || run.userId !== uid) return res.status(204).end();
+  run.interruptedAt ||= new Date().toISOString();
   run.abort.abort();
-  return res.status(202).json({ stopping: true });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      run.completion,
+      new Promise((resolve) => {
+        timeout = setTimeout(resolve, 4000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+  const stopping = activeClaudeRuns.get(sessionId) === run;
+  return res.status(stopping ? 202 : 200).json({ stopping });
 });
 app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   const body = z
@@ -1669,6 +1815,7 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
       mode: z.enum(["auto", "plan", "manual", "acceptEdits"]).default("auto"),
       backend: z.enum(["claude", "codex"]).default("claude"),
       model: z.string().trim().min(1).max(160).optional(),
+      questionId: z.string().min(1).max(200).optional(),
     })
     .safeParse(req.body);
   if (
@@ -1696,6 +1843,12 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   }
   if (activeClaudeRuns.has(s.id))
     return res.status(409).json({ error: "该会话仍有任务在后台运行" });
+  const pendingQuestion = parsePendingQuestion(s.pending_question);
+  if (
+    body.data.questionId &&
+    pendingQuestion?.toolUseId !== body.data.questionId
+  )
+    return res.status(409).json({ error: "提问已更新，请重新选择答案" });
   const count = (
     db
       .prepare("SELECT count(*) n FROM messages WHERE session_id=?")
@@ -1765,6 +1918,7 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     displayContent,
     now,
   );
+  db.prepare("UPDATE sessions SET pending_question=NULL WHERE id=?").run(s.id);
   const scheduledSession = db
     .prepare("SELECT 1 FROM scheduled_task_runs WHERE session_id=? LIMIT 1")
     .get(s.id);
@@ -1778,10 +1932,31 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.flushHeaders();
   const abort = new AbortController();
-  const activeRun = {
+  let completeRun!: () => void;
+  const completion = new Promise<void>((resolve) => {
+    completeRun = resolve;
+  });
+  const activeRun: ActiveClaudeRun = {
+    id: crypto.randomUUID(),
     abort,
     userId: uid,
     startedAt: new Date().toISOString(),
+    completion,
+  };
+  const persistInterruption = (assistantMessageId?: string) => {
+    if (!activeRun.interruptedAt) return;
+    const message = recordUserInterruption(db, {
+      sessionId: s.id,
+      runId: activeRun.id,
+      interruptedAt: activeRun.interruptedAt,
+      assistantMessageId,
+    });
+    const completedAt = new Date().toISOString();
+    db.prepare(
+      "UPDATE sessions SET updated_at=?,last_assistant_at=? WHERE id=?",
+    ).run(completedAt, completedAt, s.id);
+    if (!res.destroyed && !res.writableEnded)
+      res.write(JSON.stringify({ type: "interrupted", message }) + "\n");
   };
   activeClaudeRuns.set(s.id, activeRun);
   const cwd = workspace;
@@ -1789,8 +1964,10 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   if (backend === "codex") {
     if (!(await codexAvailable())) {
       activeClaudeRuns.delete(s.id);
+      persistInterruption();
+      completeRun();
       return res.end(
-        `${JSON.stringify({ type: "error", error: "服务器尚未安装或配置 Codex CLI" })}\n`,
+        `${JSON.stringify(activeRun.interruptedAt ? { type: "done" } : { type: "error", error: "服务器尚未安装或配置 Codex CLI" })}\n`,
       );
     }
     const startedAt = Date.now();
@@ -1815,6 +1992,11 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
       permissionMode: body.data.mode,
       model: body.data.model,
       signal: abort.signal,
+      uiContext: {
+        sessionId: s.id,
+        authToken: await tokenFor(uid),
+        apiBaseUrl: `http://127.0.0.1:${process.env.PORT || 3001}`,
+      },
     });
     const answerTracker = createCodexAnswerTracker();
     let stderr = "";
@@ -1831,17 +2013,39 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
       if (!res.destroyed && !res.writableEnded)
         res.write(`${JSON.stringify(event)}\n`);
     };
+    activeRun.onQuestion = (question) => {
+      if (activeRun.waitingForInput) return;
+      activeRun.waitingForInput = true;
+      db.prepare("UPDATE sessions SET pending_question=? WHERE id=?").run(
+        JSON.stringify(question),
+        s.id,
+      );
+      sendEvent({ type: "question", question });
+      // A received/accepted ask is not consent. Pause the CLI so dependent
+      // edits cannot proceed while the user is choosing an answer.
+      abort.abort();
+    };
+    const questionWatcher = watchCodexQuestions({
+      startedAt,
+      onQuestion: activeRun.onQuestion,
+    });
+    if (!restartClaudeSession && s.codex_thread_id)
+      questionWatcher.setThreadId(s.codex_thread_id);
     sendEvent({ type: "model", model: body.data.model || currentCodexModel() });
     const processCodexLine = (line: string) => {
       if (!line.trim()) return;
       try {
         const event = JSON.parse(line);
         const threadId = codexThreadIdFromEvent(event);
-        if (threadId)
+        if (threadId) {
+          questionWatcher.setThreadId(threadId);
           db.prepare("UPDATE sessions SET codex_thread_id=? WHERE id=?").run(
             threadId,
             s.id,
           );
+        }
+        const question = questionsFromCodexEvent(event);
+        if (question) activeRun.onQuestion?.(question);
         const cumulativeMetrics = metricsFromCodexEvent(
           event,
           Date.now() - startedAt,
@@ -1881,6 +2085,21 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
           const previous = activity.toolUseId
             ? toolActivities.get(activity.toolUseId)
             : undefined;
+          if (activity.kind === "tool" && previous) {
+            const merged = {
+              ...previous.activity,
+              ...activity,
+              output: activity.output ?? previous.activity.output,
+              detail: activity.detail || previous.activity.detail,
+            };
+            db.prepare("UPDATE messages SET content=? WHERE id=?").run(
+              JSON.stringify(merged),
+              previous.messageId,
+            );
+            previous.activity = merged;
+            sendEvent({ type: "activity", activity: merged });
+            continue;
+          }
           if (activity.kind === "tool_result" && previous) {
             const merged = {
               ...previous.activity,
@@ -1923,13 +2142,16 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     });
     child.stdout.on("end", () => processCodexLine(buffer));
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
+      await questionWatcher.close();
       if (activeClaudeRuns.get(s.id) === activeRun)
         activeClaudeRuns.delete(s.id);
       const answer = answerTracker.answer();
+      let savedAssistantMessageId: string | undefined;
       if (answer) {
         const completedAt = new Date().toISOString();
         const assistantMessageId = crypto.randomUUID();
+        savedAssistantMessageId = assistantMessageId;
         db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
           assistantMessageId,
           s.id,
@@ -1954,12 +2176,14 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
           "UPDATE sessions SET updated_at=?,last_assistant_at=? WHERE id=?",
         ).run(completedAt, completedAt, s.id);
       }
+      persistInterruption(savedAssistantMessageId);
       sendEvent(
-        code === 0
+        code === 0 || activeRun.waitingForInput || activeRun.interruptedAt
           ? { type: "done" }
           : { type: "error", error: stderr || `Codex 退出码 ${code}` },
       );
       if (!res.destroyed && !res.writableEnded) res.end();
+      completeRun();
     });
     return;
   }
@@ -2001,6 +2225,16 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
     if (!res.destroyed && !res.writableEnded)
       res.write(JSON.stringify(event) + "\n");
   };
+  activeRun.onQuestion = (question) => {
+    if (activeRun.waitingForInput) return;
+    activeRun.waitingForInput = true;
+    questionAsked = true;
+    db.prepare("UPDATE sessions SET pending_question=? WHERE id=?").run(
+      JSON.stringify(question),
+      s.id,
+    );
+    sendEvent({ type: "question", question });
+  };
   const processClaudeLine = (line: string) => {
     if (!line.trim()) return;
     try {
@@ -2013,8 +2247,7 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
         messageStartAnswer = committedAnswer;
       const question = questionsFromEvent(event);
       if (question) {
-        questionAsked = true;
-        sendEvent({ type: "question", question });
+        activeRun.onQuestion?.(question);
       }
       const text = textFromEvent(event);
       if (text && !questionAsked) {
@@ -2103,6 +2336,20 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
         const previous = activity.toolUseId
           ? toolActivities.get(activity.toolUseId)
           : undefined;
+        if (activity.kind === "tool" && previous) {
+          const merged = {
+            ...previous.activity,
+            ...activity,
+            output: activity.output ?? previous.activity.output,
+          };
+          db.prepare("UPDATE messages SET content=? WHERE id=?").run(
+            JSON.stringify(merged),
+            previous.messageId,
+          );
+          previous.activity = merged;
+          sendEvent({ type: "activity", activity: merged });
+          continue;
+        }
         if (activity.kind === "tool_result" && previous) {
           const merged = {
             ...previous.activity,
@@ -2153,9 +2400,11 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
   child.stderr.on("data", (c) => (stderr += c));
   child.on("close", (code) => {
     if (activeClaudeRuns.get(s.id) === activeRun) activeClaudeRuns.delete(s.id);
+    let savedAssistantMessageId: string | undefined;
     if (answer) {
       const t = new Date().toISOString();
       const assistantMessageId = crypto.randomUUID();
+      savedAssistantMessageId = assistantMessageId;
       db.prepare("INSERT INTO messages VALUES(?,?,?,?,?)").run(
         assistantMessageId,
         s.id,
@@ -2177,12 +2426,14 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
         "UPDATE sessions SET updated_at=?,last_assistant_at=? WHERE id=?",
       ).run(t, t, s.id);
     }
+    persistInterruption(savedAssistantMessageId);
     sendEvent(
-      code === 0
+      code === 0 || activeRun.interruptedAt
         ? { type: "done" }
         : { type: "error", error: stderr || `Claude 退出码 ${code}` },
     );
     if (!res.destroyed && !res.writableEnded) res.end();
+    completeRun();
   });
 });
 if (process.env.NODE_ENV === "production") {

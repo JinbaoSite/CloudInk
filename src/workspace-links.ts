@@ -1,6 +1,7 @@
 export function resolveWorkspaceLink(
   href: string | undefined,
   workspacePaths: string[],
+  markdownPath?: string,
 ) {
   if (!href || href.startsWith("#")) return null;
   // Keep web, mail, and every other URI scheme on React Markdown's normal path.
@@ -18,6 +19,21 @@ export function resolveWorkspaceLink(
     .replace(/\\/g, "/")
     .replace(/^\.\//, "")
     .replace(/\/{2,}/g, "/");
+
+  if (markdownPath) {
+    const parts = linkedPath.startsWith("/")
+      ? []
+      : markdownPath.split("/").slice(0, -1);
+    for (const part of linkedPath.split("/")) {
+      if (!part || part === ".") continue;
+      if (part === "..") {
+        if (!parts.length) return null;
+        parts.pop();
+      } else parts.push(part);
+    }
+    const relativePath = parts.join("/");
+    if (workspacePaths.includes(relativePath)) return relativePath;
+  }
 
   const withoutLocation = linkedPath.replace(/:\d+(?::\d+)?$/, "");
   for (const candidate of [linkedPath, withoutLocation]) {

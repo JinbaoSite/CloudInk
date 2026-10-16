@@ -32,6 +32,45 @@ body,
   height: 1px;
   overflow-anchor: auto;
 }
+.response-interruption {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 4px 0 22px;
+  padding: 6px 10px;
+  border: 1px solid #e7dfcf;
+  border-radius: 8px;
+  background: #f7f4ec;
+  color: #85734f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.messages > article.assistant:has(+ .response-interruption) {
+  margin-bottom: 8px;
+}
+.response-interruption-icon {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.response-interruption-icon > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  background: currentColor;
+}
+.response-interruption time {
+  margin-left: 5px;
+  color: #a4967b;
+  font-size: 11px;
+  white-space: nowrap;
+}
 
 .composer {
   position: relative;
