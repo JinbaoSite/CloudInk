@@ -10,6 +10,7 @@ import http from "node:http";
 import multer from "multer";
 import { z } from "zod";
 import { db, workspaceRoot } from "./db.js";
+import { createCodexEditDetails } from "./codex-edit.js";
 import { recordUserInterruption } from "./interruption.js";
 import {
   normalizeQuestions,
@@ -2025,9 +2026,11 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
       // edits cannot proceed while the user is choosing an answer.
       abort.abort();
     };
+    const editDetails = createCodexEditDetails(cwd);
     const questionWatcher = watchCodexQuestions({
       startedAt,
       onQuestion: activeRun.onQuestion,
+      onPatch: editDetails.addPatch,
     });
     if (!restartClaudeSession && s.codex_thread_id)
       questionWatcher.setThreadId(s.codex_thread_id);
@@ -2125,6 +2128,14 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
           if (activity.kind === "tool" && activity.toolUseId)
             toolActivities.set(activity.toolUseId, { messageId, activity });
           sendEvent({ type: "activity", activity });
+          editDetails.addActivity(activity, (detail) => {
+            activity.detail = detail;
+            db.prepare("UPDATE messages SET content=? WHERE id=?").run(
+              JSON.stringify(activity),
+              messageId,
+            );
+            sendEvent({ type: "activity", activity });
+          });
         }
         if (event.type === "turn.failed")
           stderr = String(

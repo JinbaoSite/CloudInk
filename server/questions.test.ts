@@ -153,3 +153,47 @@ test("rollout bridge ignores historical calls, handles split UTF8 and deduplicat
     fs.rmSync(home, { recursive: true });
   }
 });
+
+test("rollout patch details stay in the current thread and run and are delivered once", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "cloudink-patch-log-"));
+  const thread = "11111111-1111-1111-1111-111111111111";
+  const startedAt = Date.now();
+  const directory = path.join(home, "sessions");
+  fs.mkdirSync(directory);
+  const record = (callId: string, time: number) =>
+    JSON.stringify({
+      timestamp: new Date(time).toISOString(),
+      type: "event_msg",
+      payload: {
+        type: "patch_apply_end",
+        call_id: callId,
+        success: true,
+        changes: { "test.ts": { type: "update", unified_diff: "-old\n+new" } },
+      },
+    }) + "\n";
+  fs.writeFileSync(
+    path.join(directory, `rollout-${thread}.jsonl`),
+    record("old", startedAt - 1000) +
+      record("current", startedAt) +
+      record("current", startedAt),
+  );
+  fs.writeFileSync(
+    path.join(directory, "rollout-22222222-2222-2222-2222-222222222222.jsonl"),
+    record("other", startedAt),
+  );
+  const received: string[] = [];
+  const watcher = watchCodexQuestions({
+    home,
+    startedAt,
+    onQuestion: () => {},
+    onPatch: (event) => received.push(String(event.call_id)),
+  });
+  try {
+    watcher.setThreadId(thread);
+    await watcher.close();
+    assert.deepEqual(received, ["current"]);
+  } finally {
+    await watcher.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

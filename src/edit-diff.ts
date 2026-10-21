@@ -207,13 +207,29 @@ export function parseEditDiff(detail: string): DiffFile[] {
       const change = record(value);
       if (!change) return [];
       const filePath = typeof change.path === "string" ? change.path : path;
-      const diff = change.diff ?? change.patch;
+      const diff = change.diff ?? change.patch ?? change.unified_diff;
       if (typeof diff === "string" && diff.trim())
         return parsePatch(diff, filePath).map((file) => ({
           ...file,
           operation: change.kind ? operation(change.kind) : file.operation,
         }));
-      return [{ path: filePath, operation: operation(change.kind), lines: [] }];
+      const kind = operation(change.kind ?? change.type);
+      const content = change.content;
+      const lines: DiffLine[] = [];
+      if (
+        typeof content === "string" &&
+        (kind === "added" || kind === "deleted")
+      ) {
+        const parts = content.replace(/\r\n/g, "\n").split("\n");
+        if (parts.at(-1) === "") parts.pop();
+        lines.push(
+          ...parts.map((text) => ({
+            kind: kind === "added" ? ("added" as const) : ("removed" as const),
+            text,
+          })),
+        );
+      }
+      return [{ path: filePath, operation: kind, lines }];
     });
   }
   const edits = Array.isArray(root.edits) ? root.edits : [root];

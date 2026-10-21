@@ -72,6 +72,7 @@ export function watchCodexQuestions(opts: {
   startedAt: number;
   onQuestion: (question: PendingQuestion) => void;
   home?: string;
+  onPatch?: (event: Record<string, unknown>) => void;
 }) {
   const root = path.join(
     opts.home || process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
@@ -124,6 +125,16 @@ export function watchCodexQuestions(opts: {
           try {
             const event = JSON.parse(line);
             if (!(Date.parse(event.timestamp) >= opts.startedAt)) continue;
+            if (
+              event.type === "event_msg" &&
+              event.payload?.type === "patch_apply_end"
+            ) {
+              const key = `patch:${event.payload.call_id}`;
+              if (event.payload.call_id && !seen.has(key)) {
+                seen.add(key);
+                opts.onPatch?.(event.payload);
+              }
+            }
             const question = questionsFromCodexEvent(event);
             if (question && !seen.has(question.toolUseId)) {
               seen.add(question.toolUseId);
