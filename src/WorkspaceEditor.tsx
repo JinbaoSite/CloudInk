@@ -3,6 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import type { Extension } from "@codemirror/state";
 import { Circle, Eye, Menu, Pencil, Save, X } from "lucide-react";
 import MarkdownMessage from "./MarkdownMessage";
+import WorkspaceNotebook from "./WorkspaceNotebook";
 import { isWorkspaceImage, workspacePreviewUrl } from "./workspace-preview";
 
 const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -53,7 +54,7 @@ async function languageForFile(filePath: string): Promise<Extension[]> {
     const { markdown } = await import("@codemirror/lang-markdown");
     return [markdown()];
   }
-  if (["json", "jsonc"].includes(extension)) {
+  if (["json", "jsonc", "ipynb"].includes(extension)) {
     const { json } = await import("@codemirror/lang-json");
     return [json()];
   }
@@ -183,6 +184,7 @@ export default function WorkspaceEditor({
   const dirty = activeFile.content !== activeFile.savedContent;
   const markdown = isMarkdownFile(activeFile.path);
   const html = isHtmlFile(activeFile.path);
+  const notebook = /\.ipynb$/i.test(activeFile.path);
   const image = isWorkspaceImage(activeFile.path);
   const fileView = fileViews[activeFile.path] || "preview";
   const setFileView = (view: "preview" | "edit") =>
@@ -245,7 +247,7 @@ export default function WorkspaceEditor({
         </div>
       )}
       <div
-        className={`workspace-editor-body${(markdown || html) && !activeFile.loading && !activeFile.error ? " previewable-file" : ""}${image && !activeFile.loading && !activeFile.error ? " image-file" : ""}`}
+        className={`workspace-editor-body${(markdown || html || notebook) && !activeFile.loading && !activeFile.error ? " previewable-file" : ""}${image && !activeFile.loading && !activeFile.error ? " image-file" : ""}`}
       >
         {activeFile.loading ? (
           <div className="workspace-editor-message">正在打开文件…</div>
@@ -255,11 +257,11 @@ export default function WorkspaceEditor({
           </div>
         ) : (
           <>
-            {(markdown || html) && (
+            {(markdown || html || notebook) && (
               <div
                 className="workspace-preview-toolbar"
                 role="group"
-                aria-label={`${markdown ? "Markdown" : "HTML"} 显示模式`}
+                aria-label={`${notebook ? "Notebook" : markdown ? "Markdown" : "HTML"} 显示模式`}
               >
                 <button
                   type="button"
@@ -281,7 +283,16 @@ export default function WorkspaceEditor({
                 </button>
               </div>
             )}
-            {markdown && fileView === "preview" ? (
+            {notebook ? (
+              <WorkspaceNotebook
+                content={activeFile.content}
+                path={activeFile.path}
+                editing={fileView === "edit"}
+                onChange={(value) => onChange(activeFile.path, value)}
+                workspacePaths={workspacePaths}
+                onOpenFile={onOpenFile}
+              />
+            ) : markdown && fileView === "preview" ? (
               <article
                 className="workspace-markdown-preview"
                 aria-label={`预览 ${activeFile.path}`}

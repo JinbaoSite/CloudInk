@@ -469,3 +469,246 @@
     display: grid;
   }
 }
+
+/* Notebook uses document flow, independent of the chat's global article layout. */
+article.workspace-notebook {
+  display: block;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 16px 60px 8px;
+  background: #fff;
+  color: #222;
+  font:
+    14px/1.6 Arial,
+    sans-serif;
+  scrollbar-width: thin;
+}
+.notebook-hint {
+  margin: 0 0 18px 88px;
+  color: #777;
+  font-size: 11px;
+}
+.notebook-cell {
+  min-width: 0;
+  margin: 0 0 12px;
+  padding: 5px 0;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+}
+.notebook-editing .notebook-cell:focus-within {
+  border-color: #e2e2e2;
+  border-left-color: #42a448;
+}
+.notebook-input-row,
+.notebook-output-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: start;
+}
+.notebook-prompt {
+  padding: 6px 9px 0 0;
+  text-align: right;
+  white-space: nowrap;
+  font:
+    13px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+}
+.notebook-input-prompt {
+  color: #303f9f;
+}
+.notebook-output-prompt {
+  color: #d84315;
+}
+.notebook-input,
+.notebook-output-body {
+  min-width: 0;
+}
+.notebook-code,
+.notebook-cell textarea,
+.notebook-source {
+  width: 100%;
+  border: 1px solid #cfcfcf;
+  border-radius: 2px;
+  background: #f7f7f7;
+}
+.notebook-code .cm-editor {
+  background: #f7f7f7;
+  color: #222;
+  font:
+    13px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+}
+.notebook-code .cm-editor.cm-focused {
+  outline: none;
+}
+.notebook-code .cm-content {
+  padding: 5px 0;
+}
+.notebook-code .cm-line {
+  padding: 0 6px;
+}
+.notebook-code .cm-scroller {
+  overflow: auto;
+}
+.notebook-code .cm-activeLine {
+  background: #eef4fc;
+}
+.notebook-cell textarea {
+  display: block;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 6px;
+  color: #222;
+  font:
+    13px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+}
+.notebook-cell textarea:focus-visible {
+  outline: 1px solid #42a448;
+}
+.notebook-source,
+.notebook-output-body > pre {
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 4;
+  font:
+    13px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+}
+.notebook-outputs {
+  padding-top: 4px;
+}
+.notebook-output-body {
+  overflow: auto;
+}
+.notebook-output-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.notebook-output-body iframe {
+  display: block;
+  width: 100%;
+  min-height: 240px;
+  border: 0;
+  background: white;
+}
+.notebook-output-body .error {
+  background: #fdd;
+  color: #a00;
+}
+.notebook-markdown.workspace-markdown-preview {
+  padding: 6px;
+  overflow: auto;
+  color: #222;
+  font:
+    14px/1.6 Arial,
+    sans-serif;
+}
+.notebook-markdown.workspace-markdown-preview .markdown-content {
+  width: 100%;
+  margin: 0;
+}
+.notebook-markdown.workspace-markdown-preview h1,
+.notebook-markdown.workspace-markdown-preview h2 {
+  padding: 0;
+  border: 0;
+  color: #222;
+  font-weight: 500;
+}
+.notebook-markdown.workspace-markdown-preview h1 {
+  font-size: 2em;
+}
+.notebook-markdown.workspace-markdown-preview h2 {
+  font-size: 1.65em;
+}
+.notebook-markdown.workspace-markdown-preview table {
+  width: auto;
+  font-size: 13px;
+}
+.notebook-markdown.workspace-markdown-preview th,
+.notebook-markdown.workspace-markdown-preview td {
+  border: 0;
+  padding: 5px 10px;
+}
+.notebook-markdown.workspace-markdown-preview th {
+  border-bottom: 1px solid #222;
+  background: white;
+}
+.notebook-markdown.workspace-markdown-preview tbody tr:nth-child(odd) {
+  background: #f5f5f5;
+}
+.notebook-markdown.workspace-markdown-preview pre {
+  margin: 12px 0;
+  padding: 10px;
+  background: #f7f7f7;
+  color: #222;
+  white-space: pre;
+  border: 1px solid #e7e7e7;
+  border-radius: 2px;
+}
+.notebook-markdown.workspace-markdown-preview blockquote {
+  border-left-color: #ddd;
+  color: #555;
+}
+.notebook-markdown.workspace-markdown-preview a {
+  color: #337ab7;
+}
+@media (max-width: 600px) {
+  article.workspace-notebook {
+    padding: 12px 6px 40px 2px;
+  }
+  .notebook-input-row,
+  .notebook-output-row {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+  .notebook-prompt {
+    padding-right: 5px;
+    font-size: 11px;
+  }
+  .notebook-hint {
+    margin-left: 64px;
+  }
+}
+
+.notebook-markdown .markdown-content pre code.hljs {
+  color: #222;
+}
+.notebook-markdown .markdown-content .hljs-keyword,
+.notebook-markdown .markdown-content .hljs-literal {
+  color: #008000;
+  font-weight: 600;
+}
+.notebook-markdown .markdown-content .hljs-string,
+.notebook-markdown .markdown-content .hljs-regexp {
+  color: #ba2121;
+}
+.notebook-markdown .markdown-content .hljs-number,
+.notebook-markdown .markdown-content .hljs-built_in {
+  color: #008000;
+}
+.notebook-markdown .markdown-content .hljs-title,
+.notebook-markdown .markdown-content .hljs-title.function_ {
+  color: #0000ff;
+}
+.notebook-markdown .markdown-content .hljs-comment {
+  color: #408080;
+  font-style: italic;
+}
