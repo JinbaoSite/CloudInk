@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
+import { createCodexPatchBridge } from "./codex-patch.js";
 
 const questionSchema = z.object({
   question: z.string().trim().min(1).max(10000),
@@ -87,6 +88,10 @@ export function watchCodexQuestions(opts: {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight: Promise<void> = Promise.resolve();
   const seen = new Set<string>();
+  const readPatchCall = createCodexPatchBridge((event) => {
+    seen.add(`patch-call:${String(event.call_id).replace(/:\d+$/, "")}`);
+    opts.onPatch?.(event);
+  });
   const scan = async () => {
     if (!threadId) return;
     if (!file) {
@@ -125,12 +130,17 @@ export function watchCodexQuestions(opts: {
           try {
             const event = JSON.parse(line);
             if (!(Date.parse(event.timestamp) >= opts.startedAt)) continue;
+            readPatchCall(event);
             if (
               event.type === "event_msg" &&
               event.payload?.type === "patch_apply_end"
             ) {
               const key = `patch:${event.payload.call_id}`;
-              if (event.payload.call_id && !seen.has(key)) {
+              if (
+                event.payload.call_id &&
+                !seen.has(key) &&
+                !seen.has(`patch-call:${event.payload.call_id}`)
+              ) {
                 seen.add(key);
                 opts.onPatch?.(event.payload);
               }

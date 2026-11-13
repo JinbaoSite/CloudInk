@@ -29,6 +29,7 @@
 - `server/claude.ts`：Claude CLI 参数、模型与指标、assistant 轮次及 `stream-json` 事件解析。
 - `server/claude.test.ts`：Claude 事件解析和工具轮/最终轮分类测试。
 - `server/codex.ts`：Codex CLI 参数、线程恢复、模型、逐轮指标与 JSONL 事件解析。
+- `server/codex-patch.ts`：只静态解码 rollout 中直接传给 apply_patch 的 JSON 字符串补丁；不执行日志代码。与实际 Edit 的完整路径集合、操作及工具执行时间匹配后补齐差异，拒绝动态表达式及歧义匹配。
 - `server/scheduler.ts`：Cron 解析、任务入队、并发限制和执行记录。
 - `server/slash.ts`：按 Claude/Codex 后端发现 Commands、Skills 和 description。
 - `server/ui-mcp.mjs`：把 Claude 的结构化提问及定时任务工具桥接到 Web UI。

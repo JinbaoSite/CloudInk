@@ -197,3 +197,57 @@ test("rollout patch details stay in the current thread and run and are delivered
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("rollout bridge recovers literal exec patches only after current-run completion", async () => {
+  const home = fs.mkdtempSync(
+    path.join(os.tmpdir(), "cloudink-literal-patch-"),
+  );
+  const thread = "11111111-1111-1111-1111-111111111111";
+  const startedAt = Date.now();
+  fs.mkdirSync(path.join(home, "sessions"));
+  const patch =
+    "*** Begin Patch\n*** Add File: test.py\n+中文内容\n*** End Patch";
+  const event = (id: string, output: boolean, time: number) =>
+    JSON.stringify({
+      type: "response_item",
+      timestamp: new Date(time).toISOString(),
+      payload: output
+        ? {
+            type: "custom_tool_call_output",
+            call_id: id,
+            output: [{ type: "input_text", text: "{}" }],
+          }
+        : {
+            type: "custom_tool_call",
+            name: "exec",
+            call_id: id,
+            input: `text(await tools.apply_patch(${JSON.stringify(patch)}));`,
+          },
+    }) + "\n";
+  fs.writeFileSync(
+    path.join(home, "sessions", `rollout-${thread}.jsonl`),
+    event("old", false, startedAt - 1000) +
+      event("old", true, startedAt) +
+      event("current", false, startedAt) +
+      event("current", true, startedAt + 1) +
+      event("current", false, startedAt) +
+      event("current", true, startedAt + 1),
+  );
+  const received: Record<string, unknown>[] = [];
+  const watcher = watchCodexQuestions({
+    home,
+    startedAt,
+    onQuestion: () => {},
+    onPatch: (event) => received.push(event),
+  });
+  try {
+    watcher.setThreadId(thread);
+    await watcher.close();
+    assert.equal(received.length, 1);
+    assert.equal(received[0].source, "literal_apply_patch");
+    assert.match(JSON.stringify(received[0].changes), /中文内容/);
+  } finally {
+    await watcher.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

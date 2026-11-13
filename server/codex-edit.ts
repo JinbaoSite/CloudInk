@@ -10,8 +10,13 @@ export function createCodexEditDetails(cwd: string) {
     input: Record<string, unknown>;
     changes: Change[];
     update: (detail: string) => void;
+    timestamp?: number;
   }[] = [];
-  const patches: Change[][] = [];
+  const patches: {
+    changes: Change[];
+    startedAt?: number;
+    completedAt?: number;
+  }[] = [];
   const key = (changes: Change[]) =>
     JSON.stringify(
       changes
@@ -31,14 +36,21 @@ export function createCodexEditDetails(cwd: string) {
   const reconcile = () => {
     for (let i = 0; i < waiting.length;) {
       const pending = waiting[i];
-      const index = patches.findIndex(
-        (changes) => key(changes) === key(pending.changes),
-      );
-      if (index < 0) {
+      const matches = patches
+        .map((patch, index) => ({ patch, index }))
+        .filter(
+          ({ patch }) =>
+            key(patch.changes) === key(pending.changes) &&
+            (patch.startedAt === undefined ||
+              (pending.timestamp !== undefined &&
+                pending.timestamp >= patch.startedAt &&
+                pending.timestamp <= patch.completedAt! + 5000)),
+        );
+      if (matches.length !== 1) {
         i++;
         continue;
       }
-      const [changes] = patches.splice(index, 1);
+      const [{ changes }] = patches.splice(matches[0].index, 1);
       waiting.splice(i, 1);
       const enriched = pending.changes.map((original) => {
         const patch = changes.find(
@@ -61,7 +73,11 @@ export function createCodexEditDetails(cwd: string) {
     }
   };
   return {
-    addActivity(activity: CodexActivity, update: (detail: string) => void) {
+    addActivity(
+      activity: CodexActivity,
+      update: (detail: string) => void,
+      timestamp?: number,
+    ) {
       if (activity.kind !== "tool" || activity.toolName !== "Edit") return;
       try {
         const input = JSON.parse(activity.detail || "{}");
@@ -74,7 +90,7 @@ export function createCodexEditDetails(cwd: string) {
           )
         )
           return;
-        waiting.push({ input, changes: input.changes, update });
+        waiting.push({ input, changes: input.changes, update, timestamp });
         reconcile();
       } catch {
         /* Legacy or path-only input has no reliable match. */
@@ -97,7 +113,15 @@ export function createCodexEditDetails(cwd: string) {
         changes.push({ ...change, path: filePath, kind: change.type });
       }
       if (changes.length) {
-        patches.push(changes);
+        patches.push({
+          changes,
+          ...(event.source === "literal_apply_patch"
+            ? {
+                startedAt: Number(event.started_at),
+                completedAt: Number(event.completed_at),
+              }
+            : {}),
+        });
         reconcile();
       }
     },

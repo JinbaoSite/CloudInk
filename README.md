@@ -50,6 +50,7 @@ CloudInk 是一个基于 React、Express、SQLite、Claude Code CLI 和 Codex CL
 - Claude Code 或 Codex 在工具调用前输出的过程说明会直接打印在对应工具之前；Thinking、WebSearch、Read、Write、Edit、Bash、Skill 和工具结果按真实执行顺序展示。
 - Codex 的多次进度说明分别保存和展示；即使中间只有等待或轮询，也不会合并进同一条说明或最终回答。
 - Codex 的 Edit Files 在 IN 中展示文件变更列表，保留文件路径、操作类型及事件提供的其他变更信息。
+- Codex Edit 可从当前线程的原始补丁事件或 `exec → tools.apply_patch(...)` 静态字符串日志补齐逐行差异，按文件、操作和执行时间匹配；历史会话需要回填此前未保存的补丁内容。
 - Edit Files 使用 GitHub 风格的差异视图：多个文件分别折叠、展示路径、变更类型和增删统计。新增行使用绿色背景，删除行使用红色背景；`@@` 显示为蓝色变更区块，有原始行号时显示新旧行号，没有行号时不补造。支持查看原始内容。
 - Bash/Edit 内部内容滚动到顶部或底部后，继续滚动会带动外层聊天区域。
 - WebSearch 标题统一显示工具名和搜索词，展开后单独展示搜索内容及实际返回内容；兼容旧 Codex 将搜索词存入 OUT 的记录，避免重复标题和空对象输入。

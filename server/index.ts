@@ -2128,14 +2128,18 @@ app.post("/api/sessions/:id/messages", requireAuth, async (req, res) => {
           if (activity.kind === "tool" && activity.toolUseId)
             toolActivities.set(activity.toolUseId, { messageId, activity });
           sendEvent({ type: "activity", activity });
-          editDetails.addActivity(activity, (detail) => {
-            activity.detail = detail;
-            db.prepare("UPDATE messages SET content=? WHERE id=?").run(
-              JSON.stringify(activity),
-              messageId,
-            );
-            sendEvent({ type: "activity", activity });
-          });
+          editDetails.addActivity(
+            activity,
+            (detail) => {
+              activity.detail = detail;
+              db.prepare("UPDATE messages SET content=? WHERE id=?").run(
+                JSON.stringify(activity),
+                messageId,
+              );
+              sendEvent({ type: "activity", activity });
+            },
+            Date.now(),
+          );
         }
         if (event.type === "turn.failed")
           stderr = String(
